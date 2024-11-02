@@ -6,7 +6,7 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKey
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 # Replace with your actual bot token
-BOTOKEN = "7383040553:AAE8DlZSc0PKB-UbsY5eZRB6lQmBSpuxnJU"
+BOTOKEN = "Your Bot Token here"
 
 # Enable logging
 logging.basicConfig(
