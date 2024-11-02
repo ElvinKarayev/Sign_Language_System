@@ -2,8 +2,11 @@ import logging
 import os
 import re
 import psycopg2
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
+
+# Replace with your actual bot token
+BOTOKEN = "7383040553:AAE8DlZSc0PKB-UbsY5eZRB6lQmBSpuxnJU"
 
 # Enable logging
 logging.basicConfig(
@@ -13,8 +16,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Define states for conversation flow
-LANGUAGE_SELECTION, ASK_PERMISSION, ROLE_SELECTION, TRANSLATOR_INPUT_SENTENCE, TRANSLATOR_UPLOAD, USER_REQUEST = range(6)
-TRANSLATOR_MENU, VIEW_SENTENCES, WRITE_SENTENCE, EDIT_SENTENCES = range(6, 10)  # Continue from your last state number
+LANGUAGE_SELECTION, ASK_PERMISSION, ROLE_SELECTION, TRANSLATOR_UPLOAD, USER_REQUEST = range(5)
+TRANSLATOR_MENU, WRITE_SENTENCE = range(5, 7)  # Continue from your last state number
+EDIT_SENTENCES = range(7, 8)  # New state for editing sentences
 
 # Define directories for downloading videos
 TRANSLATOR_DIR = './Video/Translator'
@@ -29,9 +33,9 @@ def connect_to_db():
     """Establishes and returns a connection to the PostgreSQL database."""
     try:
         connection = psycopg2.connect(
-            dbname="postgres",  # Updated to 'postgres'
+            dbname="sdp_project",
             user="postgres",
-            password="ubuntu",
+            password="yourPasswordHere",  # Replace with your actual password
             host="localhost",
             port="5432"
         )
@@ -41,30 +45,53 @@ def connect_to_db():
         logger.error(f"Error connecting to the database: {error}")
         return None
 
-# Check if user exists in the database and return their language if they exist
 def check_user_exists(username):
-    """Checks if a user exists in the database by username and returns the user's language (country) if they exist."""
+    """Checks if a user exists in the database by username and returns the user's id, language, and role if they exist."""
+    connection = connect_to_db()
+    if not connection:
+        return None, None, None  # Return a tuple
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT user_id, country, user_role FROM public.users WHERE username = %s", (username,))
+        result = cursor.fetchone()
+        cursor.close()
+        connection.close()
+
+        if result:
+            return result[0], result[1], result[2]  # Return user_id, language, and role
+        else:
+            return None, None, None
+    except Exception as error:
+        logger.error(f"Error checking user in the database: {error}")
+        return None, None, None  # Ensure we return a tuple
+
+# Add a new user to the database
+def add_new_user(username, language, role):
+    """Inserts a new user into the database after getting consent, with role preference."""
     connection = connect_to_db()
     if not connection:
         return None
 
     try:
         cursor = connection.cursor()
-        cursor.execute("SELECT country FROM public.users WHERE username = %s", (username,))
-        result = cursor.fetchone()
+        cursor.execute("""
+            INSERT INTO public.users (username, country, consent_status, user_role)
+            VALUES (%s, %s, %s, %s) RETURNING user_id
+        """, (username, language, True, role))
+        db_user_id = cursor.fetchone()[0]
+        connection.commit()
         cursor.close()
         connection.close()
-
-        if result:
-            return result[0]  # Return the language (country) if the user exists
-        return None
+        logger.info(f"New user {username} added to the database with role {role}.")
+        return db_user_id  # Return the newly assigned user_id
     except Exception as error:
-        logger.error(f"Error checking user in the database: {error}")
+        logger.error(f"Error adding new user to the database: {error}")
         return None
 
-# Add a new user to the database
-def add_new_user(username, language):
-    """Inserts a new user into the database after getting consent."""
+# Update user's role and language in the database
+def update_user_role_and_language(user_id, role, language):
+    """Updates the user's role and language in the database."""
     connection = connect_to_db()
     if not connection:
         return
@@ -72,18 +99,35 @@ def add_new_user(username, language):
     try:
         cursor = connection.cursor()
         cursor.execute("""
-            INSERT INTO public.users (username, country, consent_status)
-            VALUES (%s, %s, %s)
-        """, (username, language, True))  # Storing True for consent_status
+            UPDATE public.users SET user_role = %s, country = %s WHERE user_id = %s
+        """, (role, language, user_id))
         connection.commit()
         cursor.close()
         connection.close()
-        logger.info(f"New user {username} added to the database.")
+        logger.info(f"User {user_id} updated with role {role} and language {language}.")
     except Exception as error:
-        logger.error(f"Error adding new user to the database: {error}")
+        logger.error(f"Error updating user role and language in the database: {error}")
 
+# Update user's language in the database
+def update_user_language(user_id, language):
+    """Updates the user's language in the database."""
+    connection = connect_to_db()
+    if not connection:
+        return
 
-def get_user_language(username):
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            UPDATE public.users SET country = %s WHERE user_id = %s
+        """, (language, user_id))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        logger.info(f"User {user_id}'s language updated to {language}.")
+    except Exception as error:
+        logger.error(f"Error updating user language in the database: {error}")
+
+def get_user_language(user_id):
     """Retrieves user's language (country) from the database."""
     connection = connect_to_db()
     if not connection:
@@ -91,7 +135,7 @@ def get_user_language(username):
 
     try:
         cursor = connection.cursor()
-        cursor.execute("SELECT country FROM public.users WHERE username = %s", (username,))
+        cursor.execute("SELECT country FROM public.users WHERE user_id = %s", (user_id,))
         result = cursor.fetchone()
         cursor.close()
         connection.close()
@@ -103,10 +147,10 @@ def get_user_language(username):
         logger.error(f"Error getting user language from database: {error}")
         return None
 
-def save_video_info(username, file_path, role, language, sentence=None):
+def save_video_info(user_id, file_path, role, language, sentence=None):
     """Saves video information and associated sentence to the database."""
     connection = connect_to_db()
-    full_file_path=file_path.replace(".","/home/ubuntu/telegramBOT", 1)
+    full_file_path = os.path.abspath(file_path)
     if not connection:
         return
     try:
@@ -115,26 +159,25 @@ def save_video_info(username, file_path, role, language, sentence=None):
         if sentence:
             cursor = connection.cursor()
             cursor.execute("""
-                INSERT INTO public.sentences (sentence_language, sentence_content)
-                VALUES (%s, %s) RETURNING sentence_id
-            """, (language, sentence))
+                INSERT INTO public.sentences (sentence_language, sentence_content, user_id)
+                VALUES (%s, %s, %s) RETURNING sentence_id
+            """, (language, sentence, user_id))
             sentence_id = cursor.fetchone()[0]
             connection.commit()
-
+            cursor.close()
         # Then save video information
         cursor = connection.cursor()
         cursor.execute("""
             INSERT INTO public.videos 
-            (username, file_path, text_id, language, uploaded_at)
+            (user_id, file_path, text_id, language, uploaded_at)
             VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-        """, (username, full_file_path, sentence_id, language))
+        """, (user_id, full_file_path, sentence_id, language))
         connection.commit()
         cursor.close()
         connection.close()
-        logger.info(f"Video and sentence information saved for user {username}")
+        logger.info(f"Video and sentence information saved for user {user_id}")
     except Exception as error:
         logger.error(f"Error saving video information to database: {error}")
-
 
 def get_random_translator_video():
     """Fetches a random video from the database that was uploaded by a translator."""
@@ -195,26 +238,49 @@ def add_translator_menu_translations():
             'English': "Translator Menu - Please select an option:",
             'German': "Übersetzer-Menü - Bitte wählen Sie eine Option:",
             'Azerbaijani': "Tərcüməçi Menyusu - Zəhmət olmasa bir seçim edin:"
+        },
+        'available_sentences': {
+            'English': "Available sentences:",
+            'German': "Verfügbare Sätze:",
+            'Azerbaijani': "Mövcud cümlələr:"
+        },
+        'no_sentences_found': {
+            'English': "No sentences found for your language.",
+            'German': "Für Ihre Sprache wurden keine Sätze gefunden.",
+            'Azerbaijani': "Diliniz üçün cümlə tapılmadı."
+        },
+        'please_write_sentence': {
+            'English': "Please write your sentence:",
+            'German': "Bitte schreiben Sie Ihren Satz:",
+            'Azerbaijani': "Zəhmət olmasa cümlənizi yazın:"
+        },
+        'go_back': {
+            'English': "Go back",
+            'German': "Zurück",
+            'Azerbaijani': "Geri dön"
+        },
+        'delete_sentence': {
+            'English': "Delete Sentence",
+            'German': "Satz löschen",
+            'Azerbaijani': "Cümləni sil"
+        },
+        'delete_sentence_prompt': {
+            'English': "To delete this sentence, press the button below:",
+            'German': "Um diesen Satz zu löschen, drücken Sie die Schaltfläche unten:",
+            'Azerbaijani': "Bu cümləni silmək üçün aşağıdakı düyməni basın:"
+        },
+        'edit_menu_prompt': {
+            'English': "You can go back to the menu by pressing the button below.",
+            'German': "Sie können zum Menü zurückkehren, indem Sie die Schaltfläche unten drücken.",
+            'Azerbaijani': "Aşağıdakı düyməni basaraq menyuya qayıda bilərsiniz."
+        },
+        'sentence_deleted': {
+            'English': "The sentence has been deleted.",
+            'German': "Der Satz wurde gelöscht.",
+            'Azerbaijani': "Cümlə silindi."
         }
     }
     return menu_translations
-
-async def show_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Display the translator menu options."""
-    menu_translations = add_translator_menu_translations()
-    language = context.user_data.get('language', 'English')
-    
-    reply_keyboard = [
-        [menu_translations['view_sentences'][language], menu_translations['write_sentence'][language]],
-        [menu_translations['edit_sentences'][language], menu_translations['change_language'][language]],
-        [get_translation(context, 'cancel_button')]
-    ]
-    
-    await update.message.reply_text(
-        menu_translations['menu'][language],
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-    )
-    return TRANSLATOR_MENU
 
 def check_sentence_exists(sentence: str) -> bool:
     """Check if a sentence already exists in the database."""
@@ -259,51 +325,66 @@ def get_all_sentences(language: str) -> list:
         logger.error(f"Error retrieving sentences: {error}")
         return []
 
-async def handle_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle translator menu selections."""
-    menu_translations = add_translator_menu_translations()
-    language = context.user_data.get('language', 'English')
-    user_choice = update.message.text
+def get_sentences_and_videos(user_id):
+    """Fetch sentences and associated videos for a given user_id."""
+    if not user_id:
+        return []
+    connection = connect_to_db()
+    if not connection:
+        return []
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            SELECT s.sentence_id, s.sentence_content, v.file_path
+            FROM public.sentences s
+            LEFT JOIN public.videos v ON s.sentence_id = v.text_id
+            WHERE s.user_id = %s
+            ORDER BY s.sentence_id DESC
+        """, (user_id,))
+        results = cursor.fetchall()
+        cursor.close()
+        connection.close()
+        # Return list of tuples: (sentence_id, sentence_content, video_file_path)
+        return results
+    except Exception as error:
+        logger.error(f"Error fetching sentences and videos: {error}")
+        return []
 
-    if user_choice == menu_translations['view_sentences'][language]:
-        sentences = get_all_sentences(language)
-        if sentences:
-            message = "Available sentences:\n\n" + "\n".join(f"- {sentence}" for sentence in sentences)
-        else:
-            message = "No sentences found for your language."
-        await update.message.reply_text(message)
-        return await show_translator_menu(update, context)
+def delete_sentence_and_video(sentence_id, user_id):
+    """Delete a sentence and its associated video from the database and file system."""
+    if not user_id:
+        return
+    connection = connect_to_db()
+    if not connection:
+        return
+    try:
+        cursor = connection.cursor()
+        # Get the video file path before any deletion
+        cursor.execute("""
+            SELECT v.file_path FROM public.videos v
+            WHERE v.text_id = %s AND v.user_id = %s
+        """, (sentence_id, user_id))
+        result = cursor.fetchone()
+        video_file_path = result[0] if result else None
 
-    elif user_choice == menu_translations['write_sentence'][language]:
-        await update.message.reply_text("Please write your sentence:")
-        return WRITE_SENTENCE
+        # Delete the sentence first (if using CASCADE, this will delete the video record)
+        cursor.execute("""
+            DELETE FROM public.sentences
+            WHERE sentence_id = %s AND user_id = %s
+        """, (sentence_id, user_id))
 
-    elif user_choice == menu_translations['change_language'][language]:
-        reply_keyboard = [["🇬🇧 English", "🇩🇪 German", "🇦🇿 Azerbaijani"]]
-        await update.message.reply_text(
-            "Please select your new language:",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-        )
-        return LANGUAGE_SELECTION
+        connection.commit()  # Commit the database deletion
 
-    elif user_choice == get_translation(context, 'cancel_button'):
-        return await cancel(update, context)
+        # Delete the video file from the file system
+        if video_file_path and os.path.exists(video_file_path):
+            os.remove(video_file_path)
+            logger.info(f"Deleted video file {video_file_path}")
 
-    return TRANSLATOR_MENU
-
-async def handle_write_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle new sentence input from translator."""
-    menu_translations = add_translator_menu_translations()
-    language = context.user_data.get('language', 'English')
-    new_sentence = update.message.text
-
-    if check_sentence_exists(new_sentence):
-        await update.message.reply_text(menu_translations['sentence_exists'][language])
-        return await show_translator_menu(update, context)
-    else:
-        context.user_data['sentence'] = new_sentence
-        await update.message.reply_text(get_translation(context, 'video_prompt'))
-        return TRANSLATOR_UPLOAD
+        cursor.close()
+        connection.close()
+        logger.info(f"Deleted sentence {sentence_id} and associated video for user {user_id}")
+    except Exception as error:
+        logger.error(f"Error deleting sentence and video: {error}")
 
 # Define translations
 translations = {
@@ -318,13 +399,17 @@ translations = {
         'video_prompt': "Now, please upload the video for the translation.",
         'user_prompt': "Please upload your video for translation.",
         'valid_video_error': "Please upload a valid video.",
-        'thank_you_video': "Video received. Thank you! To start again, type /start.",
+        'thank_you_video': "Video received. Thank you!",
         'thank_you_response': "Your response video has been received. Thank you!",
-        'cancel_message': "Operation canceled. To start again, type /start.",
+        'cancel_message': "Operation canceled. To start again, press the /start button.",
         'no_videos_available': "Sorry, no translator videos are available at the moment.",
         'translated_sentence': "Translated sentence: {}",
         'continue_exchange': "Thank you for your video! Here's another translation for you:",
-        'no_more_videos': "There are no more translator videos available at the moment."
+        'no_more_videos': "There are no more translator videos available at the moment.",
+        'restart_message': "Please press the /start button to begin.",
+        'language_updated': "Your language has been updated.",
+        'bot_restarted': "It seems the bot was restarted or you're not in an active conversation.",
+        'start_button': "/start"
     },
     'German': {
         'consent_message': "Hallo! Um fortzufahren, benötigen wir Ihre Zustimmung zur Verwendung der von Ihnen bereitgestellten Videos zur Übersetzung. Bitte bestätigen Sie.",
@@ -337,19 +422,17 @@ translations = {
         'video_prompt': "Laden Sie nun bitte das Video für die Übersetzung hoch.",
         'user_prompt': "Bitte laden Sie Ihr Video zur Übersetzung hoch.",
         'valid_video_error': "Bitte laden Sie ein gültiges Video hoch.",
-        'thank_you_video': "Video empfangen. Vielen Dank! Um neu zu starten, tippen Sie /start.",
+        'thank_you_video': "Video empfangen. Vielen Dank!",
         'thank_you_response': "Ihr Antwortvideo wurde empfangen. Vielen Dank!",
-        'cancel_message': "Vorgang abgebrochen. Um neu zu starten, tippen Sie /start.",
+        'cancel_message': "Vorgang abgebrochen. Um neu zu starten, drücken Sie die /start-Taste.",
         'no_videos_available': "Entschuldigung, derzeit sind keine Übersetzervideos verfügbar.",
         'translated_sentence': "Übersetzter Satz: {}",
-        'restart_message': "Um neu zu starten, drücken Sie die /start-Taste.",
-        'continue_exchange': "Thank you for your video! Here's another translation for you to respond to:",
-        'no_more_videos': "There are no more translator videos available at the moment. Type /start to begin again when more videos are available.",
-        'stop_exchange': "To stop receiving videos and end the exchange, type /start",
         'continue_exchange': "Danke für Ihr Video! Hier ist eine weitere Übersetzung:",
-        'no_more_videos': "Derzeit sind keine weiteren Übersetzervideos verfügbar."
-    
-        
+        'no_more_videos': "Derzeit sind keine weiteren Übersetzervideos verfügbar.",
+        'restart_message': "Bitte drücken Sie die /start-Taste, um zu beginnen.",
+        'language_updated': "Ihre Sprache wurde aktualisiert.",
+        'bot_restarted': "Es scheint, dass der Bot neu gestartet wurde oder Sie sich nicht in einer aktiven Unterhaltung befinden.",
+        'start_button': "/start"
     },
     'Azerbaijani': {
         'consent_message': "Salam! Davam etmək üçün təqdim etdiyiniz videoların tərcüməsi üçün istifadəsinə razılıq verməyiniz lazımdır. Təsdiq edin.",
@@ -362,15 +445,17 @@ translations = {
         'video_prompt': "İndi tərcümə üçün videonuzu yükləyin.",
         'user_prompt': "Tərcümə üçün videonuzu yükləyin.",
         'valid_video_error': "Etibarlı bir video yükləyin.",
-        'thank_you_video': "Video qəbul edildi. Çox sağ olun! Yenidən başlamaq üçün /start yazın.",
+        'thank_you_video': "Video qəbul edildi. Çox sağ olun!",
         'thank_you_response': "Cavab videonuz qəbul edildi. Çox sağ olun!",
-        'cancel_message': "Əməliyyat ləğv edildi. Yenidən başlamaq üçün /start yazın.",
+        'cancel_message': "Əməliyyat ləğv edildi. Yenidən başlamaq üçün /start düyməsini basın.",
         'no_videos_available': "Üzr istəyirik, hal-hazırda tərcüməçi videoları mövcud deyil.",
         'translated_sentence': "Tərcümə edilmiş cümlə: {}",
-        'restart_message': "Yenidən başlamaq üçün /start düyməsini basın.",
         'continue_exchange': "Videonuz üçün təşəkkür edirik! Növbəti tərcümə budur:",
-        'no_more_videos': "Hal-hazırda başqa tərcüməçi videoları mövcud deyil."
-    
+        'no_more_videos': "Hal-hazırda başqa tərcüməçi videoları mövcud deyil.",
+        'restart_message': "Başlamaq üçün /start düyməsini basın.",
+        'language_updated': "Diliniz yeniləndi.",
+        'bot_restarted': "Görünür, bot yenidən başladılıb və ya aktiv söhbətdə deyilsiniz.",
+        'start_button': "/start"
     }
 }
 
@@ -379,30 +464,51 @@ def get_translation(context, key):
     language = context.user_data.get('language', 'English')
     return translations[language][key]
 
+# Helper Functions
+def get_user_id_from_context(context):
+    """Retrieve the user_id from context.user_data or return None if not available."""
+    return context.user_data.get('user_id')
+
+async def send_message(update: Update, text: str, reply_markup=None):
+    if update.message:
+        await update.message.reply_text(text, reply_markup=reply_markup)
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the bot by checking if user exists and using their language, or asking for language selection if new."""
-    username = update.message.from_user.username
+    user = update.effective_user
+    username = user.username or "unknown_user"
 
-    # Check if the user already exists in the database and retrieve their language
-    user_language = check_user_exists(username)
+    # Store username
+    context.user_data['username'] = username
 
-    if user_language:
-        # If the user exists, set their language automatically
+    # Check if the user already exists in the database and retrieve their language and role
+    db_user_id, user_language, user_role = check_user_exists(username)
+
+    if db_user_id is not None and user_language is not None and user_role is not None:
+        # User exists, store db_user_id
+        context.user_data['user_id'] = db_user_id
         context.user_data['language'] = user_language
-        await update.message.reply_text(
-            f"Welcome back! Using your preferred language: {user_language}.",
-        )
-        
-        # Proceed directly to role selection
-        reply_keyboard = [[get_translation(context, 'translator_button'), get_translation(context, 'user_button')], [get_translation(context, 'cancel_button')]]
-        await update.message.reply_text(
-            get_translation(context, 'choose_role'),
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-        )
-        return ROLE_SELECTION
+        context.user_data['role'] = user_role
 
-    # If the user does not exist, ask for language selection
+        # Proceed depending on the role
+        if user_role == 'Translator':
+            return await show_translator_menu(update, context)
+        else:
+            # User flow remains unchanged
+            return await handle_user_flow(update, context)
+    elif db_user_id is None and user_language is None and user_role is None:
+        # User does not exist, ask for language selection
+        return await prompt_language_selection(update, context)
+    else:
+        # Database connection failed or another error occurred
+        await update.message.reply_text("Sorry, we're experiencing technical difficulties. Please try again later.")
+        return ConversationHandler.END
+
+# Prompt language selection
+async def prompt_language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     reply_keyboard = [["🇬🇧 English", "🇩🇪 German", "🇦🇿 Azerbaijani"]]
     await update.message.reply_text(
         "Please select your language:",
@@ -421,23 +527,38 @@ async def language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data['language'] = 'German'
     elif "🇦🇿" in selected_language:
         context.user_data['language'] = 'Azerbaijani'
+    else:
+        # Handle invalid selection
+        await update.message.reply_text("Please select a valid language option.")
+        return LANGUAGE_SELECTION  # Stay in the same state
 
-    # Proceed to ask for user consent after language selection
-    reply_keyboard = [[get_translation(context, 'confirm_button'), get_translation(context, 'cancel_button')]]
-    await update.message.reply_text(
-        get_translation(context, 'consent_message'),
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-    )
-    return ASK_PERMISSION
+    user_id = get_user_id_from_context(context)
+    if not user_id and not context.user_data.get('username'):
+        await send_message(update, get_translation(context, 'bot_restarted'))
+        return ConversationHandler.END
+
+    if context.user_data.get('change_language'):
+        # User is changing language
+        update_user_language(user_id, context.user_data['language'])
+        await update.message.reply_text(get_translation(context, 'language_updated'))
+        # Clear the flag
+        context.user_data.pop('change_language', None)
+        # Return to the translator menu
+        return await show_translator_menu(update, context)
+    else:
+        # New user flow, proceed to ask for consent
+        reply_keyboard = [[get_translation(context, 'confirm_button'), get_translation(context, 'cancel_button')]]
+        await update.message.reply_text(
+            get_translation(context, 'consent_message'),
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+        )
+        return ASK_PERMISSION
 
 # Handle the confirmation (permission)
 async def ask_permission(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_response = update.message.text
-    username = update.message.from_user.username
 
     if user_response == get_translation(context, 'confirm_button'):
-        # Add new user to the database after consent
-        add_new_user(username, context.user_data['language'])
 
         # Proceed to role selection
         reply_keyboard = [[get_translation(context, 'translator_button'), get_translation(context, 'user_button')], [get_translation(context, 'cancel_button')]]
@@ -454,81 +575,253 @@ async def ask_permission(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # Handle role selection
 async def role_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_role = update.message.text
-    
+    user_role_text = update.message.text
+
     # Check if cancel is pressed
-    if user_role == get_translation(context, 'cancel_button'):
+    if user_role_text == get_translation(context, 'cancel_button'):
         return await cancel(update, context)
-    
+
     # Validate user input
-    if user_role not in [get_translation(context, 'translator_button'), get_translation(context, 'user_button')]:
+    if user_role_text not in [get_translation(context, 'translator_button'), get_translation(context, 'user_button')]:
         await update.message.reply_text(
             get_translation(context, 'choose_role')
         )
         return ROLE_SELECTION
-    
-    context.user_data['role'] = user_role  # Store role in user_data
 
-    # Continue with the flow depending on the role
-    if user_role == get_translation(context, 'translator_button'):
-        # Show translator menu instead of going directly to sentence input
-        menu_translations = add_translator_menu_translations()
-        language = context.user_data.get('language', 'English')
-        
-        reply_keyboard = [
-            [menu_translations['view_sentences'][language], menu_translations['write_sentence'][language]],
-            [menu_translations['edit_sentences'][language], menu_translations['change_language'][language]],
-            [get_translation(context, 'cancel_button')]
-        ]
-        
-        await update.message.reply_text(
-            menu_translations['menu'][language],
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-        )
-        return TRANSLATOR_MENU
+    # Map user_role_text to role_value
+    role_value = 'Translator' if user_role_text == get_translation(context, 'translator_button') else 'User'
+    context.user_data['role'] = role_value  # Store role in user_data
+
+    username = context.user_data.get('username')
+    language = context.user_data.get('language', 'English')
+
+    # Check if user exists
+    db_user_id, existing_language, existing_role = check_user_exists(username)
+    if db_user_id is not None:
+        # User exists, update their role and language
+        update_user_role_and_language(db_user_id, role_value, language)
+        context.user_data['user_id'] = db_user_id  # Store db_user_id
     else:
-        # User flow remains unchanged
-        video_path, sentence = get_random_translator_video()
-        
-        if video_path and os.path.exists(video_path):
-            # Send the video and the associated sentence if it exists
-            with open(video_path, 'rb') as video_file:
-                await update.message.reply_video(video_file)
-                if sentence:
-                    await update.message.reply_text(
-                        get_translation(context, 'translated_sentence').format(sentence)
-                    )
-        
-            reply_keyboard = [[get_translation(context, 'cancel_button')]]
-            await update.message.reply_text(
-                get_translation(context, 'user_prompt'),
-                reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-            )
-            return USER_REQUEST
+        # User does not exist, add new user and store db_user_id
+        db_user_id = add_new_user(username, language, role_value)
+        if db_user_id is not None:
+            context.user_data['user_id'] = db_user_id  # Store db_user_id
         else:
-            await update.message.reply_text(get_translation(context, 'no_videos_available'))
+            await update.message.reply_text("Sorry, we're experiencing technical difficulties. Please try again later.")
             return ConversationHandler.END
 
-# Handle translator sentence input
-async def handle_translator_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    sentence = update.message.text
+    # Continue with the flow depending on the role
+    if role_value == 'Translator':
+        return await show_translator_menu(update, context)
+    else:
+        return await handle_user_flow(update, context)
 
-    # Check if cancel is pressed
-    if sentence == get_translation(context, 'cancel_button'):
+# Handle user flow
+async def handle_user_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    video_path, sentence = get_random_translator_video()
+
+    if video_path and os.path.exists(video_path):
+        # Send the video and the associated sentence if it exists
+        with open(video_path, 'rb') as video_file:
+            await update.message.reply_video(video_file)
+            if sentence:
+                await update.message.reply_text(
+                    get_translation(context, 'translated_sentence').format(sentence)
+                )
+
+        reply_keyboard = [[get_translation(context, 'cancel_button')]]
+        await update.message.reply_text(
+            get_translation(context, 'user_prompt'),
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+        )
+        return USER_REQUEST
+    else:
+        await update.message.reply_text(get_translation(context, 'no_videos_available'))
+        return ConversationHandler.END
+
+# Display the translator menu options
+async def show_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Display the translator menu options."""
+    menu_translations = add_translator_menu_translations()
+    language = context.user_data.get('language', 'English')
+
+    reply_keyboard = [
+        [menu_translations['view_sentences'][language], menu_translations['write_sentence'][language]],
+        [menu_translations['edit_sentences'][language], menu_translations['change_language'][language]],
+        [get_translation(context, 'cancel_button')]
+    ]
+
+    await send_message(
+        update,
+        menu_translations['menu'][language],
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+    )
+    return TRANSLATOR_MENU
+
+
+# Handle translator menu selections
+async def handle_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle translator menu selections."""
+    menu_translations = add_translator_menu_translations()
+    language = context.user_data.get('language', 'English')
+    user_choice = update.message.text
+
+    if user_choice == menu_translations['view_sentences'][language]:
+        sentences = get_all_sentences(language)
+        if sentences:
+            # Use the translated header
+            message = f"{menu_translations['available_sentences'][language]}\n\n" + "\n".join(f"- {sentence}" for sentence in sentences)
+        else:
+            # Use the translated message for no sentences found
+            message = menu_translations['no_sentences_found'][language]
+        await update.message.reply_text(message)
+        return await show_translator_menu(update, context)
+
+    elif user_choice == menu_translations['write_sentence'][language]:
+        # Use the translated prompt
+        await update.message.reply_text(menu_translations['please_write_sentence'][language])
+        return WRITE_SENTENCE
+
+    elif user_choice == menu_translations['edit_sentences'][language]:
+        # Proceed to edit sentences
+        return await handle_edit_sentences(update, context)
+
+    elif user_choice == menu_translations['change_language'][language]:
+        context.user_data['change_language'] = True  # Set flag to indicate language change
+        reply_keyboard = [["🇬🇧 English", "🇩🇪 German", "🇦🇿 Azerbaijani"]]
+        await update.message.reply_text(
+            "Please select your new language:",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+        )
+        return LANGUAGE_SELECTION
+
+    elif user_choice == get_translation(context, 'cancel_button'):
         return await cancel(update, context)
 
-    context.user_data['sentence'] = sentence  # Store the sentence
+    return TRANSLATOR_MENU
 
-    # After the sentence is received, ask for video upload
-    await update.message.reply_text(get_translation(context, 'video_prompt'))
-    return TRANSLATOR_UPLOAD
+# Handle editing sentences
+async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the 'Edit Sentences' option for the translator."""
+    menu_translations = add_translator_menu_translations()
+    language = context.user_data.get('language', 'English')
+    user_id = context.user_data.get('user_id')
+
+    if not user_id:
+        await send_message(update, get_translation(context, 'bot_restarted'))
+        return ConversationHandler.END
+
+    # Fetch sentences and associated videos for this translator
+    sentences_videos = get_sentences_and_videos(user_id)
+
+    if not sentences_videos:
+        await send_message(update, menu_translations['no_sentences_found'][language])
+        return await show_translator_menu(update, context)
+
+    for sentence_id, sentence_content, video_file_path in sentences_videos:
+        # Send the sentence text
+        await send_message(update, f"• {sentence_content}")
+
+        # Send the associated video if exists
+        if video_file_path and os.path.exists(video_file_path):
+            with open(video_file_path, 'rb') as video_file:
+                if update.message:
+                    await update.message.reply_video(video_file)
+                elif update.callback_query:
+                    await update.callback_query.message.reply_video(video_file)
+
+        # Send the 'Delete' button
+        delete_button = InlineKeyboardButton(
+            text=menu_translations['delete_sentence'][language],
+            callback_data=f"delete_{sentence_id}"
+        )
+        keyboard = InlineKeyboardMarkup([[delete_button]])
+        await send_message(
+            update,
+            menu_translations['delete_sentence_prompt'][language],
+            reply_markup=keyboard
+        )
+
+    # Provide 'Go back' button
+    go_back_button = [[menu_translations['go_back'][language]]]
+    await send_message(
+        update,
+        menu_translations['edit_menu_prompt'][language],
+        reply_markup=ReplyKeyboardMarkup(go_back_button, one_time_keyboard=True)
+    )
+
+    return EDIT_SENTENCES
+
+# Handle deletion of sentences
+async def handle_delete_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the deletion of a sentence when 'Delete' button is pressed."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    match = re.match(r"delete_(\d+)", data)
+    if match:
+        sentence_id = int(match.group(1))
+        user_id = context.user_data.get('user_id')
+
+        if not user_id:
+            await send_message(update, get_translation(context, 'bot_restarted'))
+            return ConversationHandler.END
+
+        # Delete the sentence and associated video
+        delete_sentence_and_video(sentence_id, user_id)
+
+        # Inform the user
+        language = context.user_data.get('language', 'English')
+        await query.message.reply_text(
+            add_translator_menu_translations()['sentence_deleted'][language]
+        )
+        # Refresh the list
+        return await handle_edit_sentences(update, context)
+    else:
+        logger.error(f"Invalid callback data: {data}")
+        return EDIT_SENTENCES
+
+# Handle navigation in 'Edit Sentences' menu
+async def edit_sentences_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle navigation within the 'Edit Sentences' menu."""
+    user_input = update.message.text if update.message else None
+    menu_translations = add_translator_menu_translations()
+    language = context.user_data.get('language', 'English')
+
+    if user_input == menu_translations['go_back'][language]:
+        # Go back to translator menu
+        return await show_translator_menu(update, context)
+    else:
+        # Unrecognized input, prompt again
+        await send_message(update, menu_translations['edit_menu_prompt'][language])
+        return EDIT_SENTENCES
+
+# Handle new sentence input from translator
+async def handle_write_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle new sentence input from translator."""
+    menu_translations = add_translator_menu_translations()
+    language = context.user_data.get('language', 'English')
+    new_sentence = update.message.text
+
+    # Check if cancel is pressed
+    if new_sentence == get_translation(context, 'cancel_button'):
+        return await cancel(update, context)
+
+    # Proceed with handling the sentence if it's not a cancellation
+    if check_sentence_exists(new_sentence):
+        await update.message.reply_text(menu_translations['sentence_exists'][language])
+        return await show_translator_menu(update, context)
+    else:
+        context.user_data['sentence'] = new_sentence
+        await update.message.reply_text(get_translation(context, 'video_prompt'))
+        return TRANSLATOR_UPLOAD
 
 # Function to generate the next available filename based on the username
 def get_next_available_filename(directory, username, role):
     """Find the next available video filename for the user to avoid conflicts."""
     prefix = f"{role.lower()}_video_{username}_"
     existing_files = [f for f in os.listdir(directory) if f.startswith(prefix)]
-    
+
     # Extract the highest number from existing files
     max_number = 0
     for file in existing_files:
@@ -536,7 +829,7 @@ def get_next_available_filename(directory, username, role):
         if match:
             file_number = int(match.group(1))
             max_number = max(max_number, file_number)
-    
+
     # Increment the number
     next_number = max_number + 1
     return os.path.join(directory, f"{prefix}{next_number}.mp4")
@@ -547,7 +840,6 @@ async def download_video(video, file_path, context):
     new_file = await context.bot.get_file(video.file_id)
     await new_file.download_to_drive(file_path)
 
-
 # Handle video upload for translators
 async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_input = update.message.text
@@ -555,31 +847,35 @@ async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await cancel(update, context)
 
     if update.message.video:
-        username = update.message.from_user.username or "unknown_user"
+        user_id = context.user_data.get('user_id')
+        username = context.user_data.get('username')
+
+        if not user_id:
+            await send_message(update, get_translation(context, 'bot_restarted'))
+            return ConversationHandler.END
+
         file_path = get_next_available_filename(TRANSLATOR_DIR, username, "translator")
-        
-        # Get user's language from database
-        user_language = get_user_language(username)
-        if not user_language:
-            logger.error(f"Could not find language for user {username}")
-            user_language = "unknown"  # Default fallback
-        
+
+        # Get user's language from context
+        user_language = context.user_data.get('language', 'unknown')
+
         # Get the sentence from context
         sentence = context.user_data.get('sentence')
-        
+
         # Download the video
         await download_video(update.message.video, file_path, context)
-        
+
         # Save video information with language and sentence
-        # The function will handle both sentence and video storage
-        save_video_info(username, file_path, "translator", user_language, sentence)
-        
+        save_video_info(user_id, file_path, "translator", user_language, sentence)
+
+        # Thank the translator and redirect to the menu
         await update.message.reply_text(get_translation(context, 'thank_you_video'))
-        return ConversationHandler.END
+
+        # Redirect to translator menu
+        return await show_translator_menu(update, context)
     else:
         await update.message.reply_text(get_translation(context, 'valid_video_error'))
         return TRANSLATOR_UPLOAD
-    
 
 # Handle user video request and upload
 async def user_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -589,62 +885,94 @@ async def user_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return await start(update, context)
 
     if update.message.video:
-        username = update.message.from_user.username or "unknown_user"
+        user_id = context.user_data.get('user_id')
+        username = context.user_data.get('username')
+
+        if not user_id:
+            await send_message(update, get_translation(context, 'bot_restarted'))
+            return ConversationHandler.END
+
         file_path = get_next_available_filename(USER_DIR, username, "user")
-        
-        # Get user's language from database
-        user_language = get_user_language(username)
-        if not user_language:
-            logger.error(f"Could not find language for user {username}")
-            user_language = "unknown"
-        
+
+        # Get user's language from context
+        user_language = context.user_data.get('language', 'unknown')
+
         # Download the video
         await download_video(update.message.video, file_path, context)
-        
+
         # Save video information with language
-        save_video_info(username, file_path, "user", user_language)
-        
+        save_video_info(user_id, file_path, "user", user_language)
+
         # Send confirmation and get next video
         await update.message.reply_text(get_translation(context, 'continue_exchange'))
-        
+
         # Get and send the next random video
         video_path, sentence = get_random_translator_video()
-        
+
         if video_path and os.path.exists(video_path):
             # Send the video and the associated sentence if it exists
             with open(video_path, 'rb') as video_file:
                 await update.message.reply_video(video_file)
                 if sentence:
-                    await update.message.reply_text(f"Translated sentence: {sentence}")
-            
+                    await update.message.reply_text(
+                        get_translation(context, 'translated_sentence').format(sentence)
+                    )
+
             # Continue in the same state to allow another video upload
             return USER_REQUEST
         else:
             # If no more videos are available, end the conversation
-            await update.message.reply_text(get_translation(context, 'no_more_videos'))
+            await update.message.reply_text(
+                get_translation(context, 'no_more_videos'),
+                reply_markup=ReplyKeyboardMarkup([[get_translation(context, 'start_button')]], one_time_keyboard=True)
+            )
             return ConversationHandler.END
     else:
         await update.message.reply_text(get_translation(context, 'valid_video_error'))
         return USER_REQUEST
 
-
 # Cancel operation
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle cancellation of the conversation."""
     await update.message.reply_text(
-        get_translation(context, 'cancel_message')
+        get_translation(context, 'cancel_message'),
+        reply_markup=ReplyKeyboardRemove()
     )
 
     # Provide the "Start" button after cancellation
     await update.message.reply_text(
         get_translation(context, 'restart_message'),
-        reply_markup=ReplyKeyboardMarkup([['/start']], one_time_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup([[get_translation(context, 'start_button')]], one_time_keyboard=True)
     )
     return ConversationHandler.END
 
+# Fallback handler for messages outside of conversation
+async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle messages when no conversation is active."""
+    # Attempt to get the user's language from the database
+    user_id = context.user_data.get('user_id')
+    if user_id:
+        user_language = get_user_language(user_id) or 'English'
+        context.user_data['language'] = user_language
+    else:
+        context.user_data['language'] = 'English'
+
+    # Remove any custom keyboards
+    await send_message(
+        update,
+        get_translation(context, 'bot_restarted'),
+        reply_markup=ReplyKeyboardRemove()
+    )
+    # Provide the "Start" button
+    await send_message(
+        update,
+        get_translation(context, 'restart_message'),
+        reply_markup=ReplyKeyboardMarkup([[get_translation(context, 'start_button')]], one_time_keyboard=True)
+    )
+
 def main() -> None:
     """Start the bot."""
-    application = Application.builder().token("7383040553:AAE8DlZSc0PKB-UbsY5eZRB6lQmBSpuxnJU").build()
+    application = Application.builder().token(BOTOKEN).build()
 
     # Set up conversation handler with states
     conv_handler = ConversationHandler(
@@ -654,29 +982,33 @@ def main() -> None:
             ASK_PERMISSION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_permission)],
             ROLE_SELECTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, role_selection)],
             TRANSLATOR_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_translator_menu)],
-            VIEW_SENTENCES: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_translator_menu)],
             WRITE_SENTENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_write_sentence)],
-            TRANSLATOR_INPUT_SENTENCE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_translator_sentence),
-                CommandHandler("start", start)
-            ],
             TRANSLATOR_UPLOAD: [
-                MessageHandler(filters.VIDEO | filters.TEXT & ~filters.COMMAND, handle_video_upload),
+                MessageHandler(filters.VIDEO | (filters.TEXT & ~filters.COMMAND), handle_video_upload),
                 CommandHandler("start", start)
             ],
             USER_REQUEST: [
-                MessageHandler(filters.VIDEO | filters.TEXT & ~filters.COMMAND, user_video_request),
-                CommandHandler("start", start)  # Add start command handler here
-            ]
+                MessageHandler(filters.VIDEO | (filters.TEXT & ~filters.COMMAND), user_video_request),
+                CommandHandler("start", start)
+            ],
+            EDIT_SENTENCES: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_sentences_navigation),
+                CallbackQueryHandler(handle_delete_sentence)
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
     application.add_handler(conv_handler)
 
+    # Add fallback handler for messages outside of conversation
+    application.add_handler(MessageHandler(filters.ALL, fallback_handler))
+
     # Test the database connection during bot initialization
     if connect_to_db():
         logger.info("Database connection tested successfully.")
+    else:
+        logger.error("Failed to connect to the database. Please check your database settings.")
 
     # Start the Bot
     application.run_polling()
