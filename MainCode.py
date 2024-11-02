@@ -147,10 +147,11 @@ def get_user_language(user_id):
         logger.error(f"Error getting user language from database: {error}")
         return None
 
-def save_video_info(user_id, file_path, role, language, sentence=None):
+def save_video_info(user_id, file_path, language, sentence=None):
     """Saves video information and associated sentence to the database."""
     connection = connect_to_db()
     full_file_path = os.path.abspath(file_path)
+    full_file_path= full_file_path.replace('\\', '/')
     if not connection:
         return
     try:
@@ -866,7 +867,7 @@ async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
         await download_video(update.message.video, file_path, context)
 
         # Save video information with language and sentence
-        save_video_info(user_id, file_path, "translator", user_language, sentence)
+        save_video_info(user_id, file_path, user_language, sentence)
 
         # Thank the translator and redirect to the menu
         await update.message.reply_text(get_translation(context, 'thank_you_video'))
@@ -901,14 +902,13 @@ async def user_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await download_video(update.message.video, file_path, context)
 
         # Save video information with language
-        save_video_info(user_id, file_path, "user", user_language)
+        save_video_info(user_id, file_path, user_language)
 
         # Send confirmation and get next video
         await update.message.reply_text(get_translation(context, 'continue_exchange'))
 
         # Get and send the next random video
         video_path, sentence = get_random_translator_video()
-
         if video_path and os.path.exists(video_path):
             # Send the video and the associated sentence if it exists
             with open(video_path, 'rb') as video_file:
