@@ -6,7 +6,7 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKey
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 # Replace with your actual bot token
-BOTOKEN = "Your Bot Token here"
+BOTOKEN = "YOUR TOKEN HERE"
 
 # Enable logging
 logging.basicConfig(
@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 LANGUAGE_SELECTION, ASK_PERMISSION, ROLE_SELECTION, TRANSLATOR_UPLOAD, USER_REQUEST = range(5)
 TRANSLATOR_MENU, WRITE_SENTENCE = range(5, 7)  # Continue from your last state number
 EDIT_SENTENCES = range(7, 8)  # New state for editing sentences
+USER_MENU = 8
+USER_VIEW_VIDEOS = 9
 
 # Define directories for downloading videos
 TRANSLATOR_DIR = './Video/Translator'
@@ -33,9 +35,9 @@ def connect_to_db():
     """Establishes and returns a connection to the PostgreSQL database."""
     try:
         connection = psycopg2.connect(
-            dbname="sdp_project",
+            dbname="sdp_telegram_bot2",
             user="postgres",
-            password="yourPasswordHere",  # Replace with your actual password
+            password="your pass here",  # Replace with your actual password
             host="localhost",
             port="5432"
         )
@@ -147,7 +149,7 @@ def get_user_language(user_id):
         logger.error(f"Error getting user language from database: {error}")
         return None
 
-def save_video_info(user_id, file_path, language, sentence=None):
+def save_video_info(user_id, file_path, language, sentence=None, reference_id=None, sentence_id=None):
     """Saves video information and associated sentence to the database."""
     connection = connect_to_db()
     full_file_path = os.path.abspath(file_path)
@@ -155,9 +157,8 @@ def save_video_info(user_id, file_path, language, sentence=None):
     if not connection:
         return
     try:
-        # First, if there's a sentence, save it to sentences table
-        sentence_id = None
-        if sentence:
+        # First, if there's a sentence and no sentence_id provided, save it to sentences table
+        if sentence and not sentence_id:
             cursor = connection.cursor()
             cursor.execute("""
                 INSERT INTO public.sentences (sentence_language, sentence_content, user_id)
@@ -170,9 +171,9 @@ def save_video_info(user_id, file_path, language, sentence=None):
         cursor = connection.cursor()
         cursor.execute("""
             INSERT INTO public.videos 
-            (user_id, file_path, text_id, language, uploaded_at)
-            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-        """, (user_id, full_file_path, sentence_id, language))
+            (user_id, file_path, text_id, language, video_reference_id, uploaded_at)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+        """, (user_id, full_file_path, sentence_id, language, reference_id))
         connection.commit()
         cursor.close()
         connection.close()
@@ -180,33 +181,90 @@ def save_video_info(user_id, file_path, language, sentence=None):
     except Exception as error:
         logger.error(f"Error saving video information to database: {error}")
 
-def get_random_translator_video():
-    """Fetches a random video from the database that was uploaded by a translator."""
+
+def get_random_translator_video(user_language, context=None):
+    """
+    Fetches a random video from the database that was uploaded by a translator in the specified language,
+    excluding videos that the user has already responded to.
+    """
     connection = connect_to_db()
     if not connection:
+        logger.error("Failed to connect to database")
         return None, None
 
     try:
         cursor = connection.cursor()
-        # Query to get a random video uploaded by a translator along with its associated sentence
+        user_id = context.user_data.get('user_id') if context else None
+
+        logger.info(f"Searching for videos in language: {user_language} for user: {user_id}")
+
         cursor.execute("""
-            SELECT v.file_path, s.sentence_content 
-            FROM public.videos v
-            LEFT JOIN public.sentences s ON v.text_id = s.sentence_id
-            WHERE v.file_path LIKE '%/Translator/%'
-            ORDER BY RANDOM()
-            LIMIT 1
-        """)
+            SELECT v.video_id, v.file_path, s.sentence_content
+            FROM videos v
+            LEFT JOIN sentences s ON v.text_id = s.sentence_id
+            JOIN users u ON v.user_id = u.user_id
+            WHERE v.language = %s
+            AND u.user_role = 'Translator'
+            AND v.video_id NOT IN (
+                SELECT uv.video_reference_id
+                FROM videos uv
+                WHERE uv.user_id = %s
+                AND uv.video_reference_id IS NOT NULL
+            )
+        """, (user_language, user_id))
+        
+        all_results = cursor.fetchall()
+        logger.info(f"Found {len(all_results)} unwatched videos in {user_language}")
+        
+        if all_results:
+            import random
+            chosen_result = random.choice(all_results)
+            video_id = chosen_result[0]
+            file_path = chosen_result[1]
+            sentence = chosen_result[2]
+            
+            logger.info(f"Selected video ID: {video_id}, path: {file_path}")
+            
+            if context:
+                context.user_data['current_translator_video_id'] = video_id
+            
+            cursor.close()
+            connection.close()
+            return file_path, sentence
+            
+        cursor.close()
+        connection.close()
+        logger.warning(f"No unwatched videos found for language: {user_language}")
+        return None, None
+        
+    except Exception as error:
+        logger.error(f"Error fetching random translator video: {error}")
+        if connection:
+            connection.close()
+        return None, None
+
+def get_video_text_id(video_id):
+    """Retrieve the text_id associated with a video."""
+    connection = connect_to_db()
+    if not connection:
+        return None
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            SELECT text_id FROM public.videos WHERE video_id = %s
+        """, (video_id,))
         result = cursor.fetchone()
         cursor.close()
         connection.close()
-
         if result:
-            return result[0], result[1]  # Returns tuple of (file_path, sentence)
-        return None, None
+            return result[0]
+        else:
+            return None
     except Exception as error:
-        logger.error(f"Error fetching random translator video: {error}")
-        return None, None
+        logger.error(f"Error retrieving text_id for video_id {video_id}: {error}")
+        return None
+
+
 
 def add_translator_menu_translations():
     menu_translations = {
@@ -279,6 +337,26 @@ def add_translator_menu_translations():
             'English': "The sentence has been deleted.",
             'German': "Der Satz wurde gelöscht.",
             'Azerbaijani': "Cümlə silindi."
+        }
+    }
+    return menu_translations
+
+def add_user_menu_translations():
+    menu_translations = {
+        'user_menu': {
+            'English': "User Menu - Please select an option:",
+            'German': "Benutzermenü - Bitte wählen Sie eine Option:",
+            'Azerbaijani': "İstifadəçi Menyusu - Zəhmət olmasa bir seçim edin:"
+        },
+        'view_videos': {
+            'English': "View Your Videos",
+            'German': "Ihre Videos ansehen",
+            'Azerbaijani': "Videolarınıza baxın"
+        },
+        'request_video': {
+            'English': "Request Video",
+            'German': "Video anfordern",
+            'Azerbaijani': "Video tələb edin"
         }
     }
     return menu_translations
@@ -386,6 +464,79 @@ def delete_sentence_and_video(sentence_id, user_id):
         logger.info(f"Deleted sentence {sentence_id} and associated video for user {user_id}")
     except Exception as error:
         logger.error(f"Error deleting sentence and video: {error}")
+
+
+def get_user_videos_and_translator_videos(user_id):
+    """Fetch user's videos and corresponding translator videos."""
+    if not user_id:
+        return []
+    connection = connect_to_db()
+    if not connection:
+        return []
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            SELECT uv.video_id as user_video_id,
+                   uv.file_path as user_video_path,
+                   tv.file_path as translator_video_path
+            FROM public.videos uv
+            LEFT JOIN public.videos tv ON uv.video_reference_id = tv.video_id
+            WHERE uv.user_id = %s
+            ORDER BY uv.uploaded_at DESC
+        """, (user_id,))
+        results = cursor.fetchall()
+        cursor.close()
+        connection.close()
+        # Return a list of dictionaries
+        videos = []
+        for row in results:
+            videos.append({
+                'user_video_id': row[0],
+                'user_video_path': row[1],
+                'translator_video_path': row[2]
+            })
+        return videos
+    except Exception as error:
+        logger.error(f"Error fetching user's videos: {error}")
+        return []
+
+def delete_user_video(video_id, user_id):
+    """Delete a user's video from the database and file system."""
+    if not user_id:
+        return
+    connection = connect_to_db()
+    if not connection:
+        return
+    try:
+        cursor = connection.cursor()
+        # Get the video file path before deletion
+        cursor.execute("""
+            SELECT file_path FROM public.videos
+            WHERE video_id = %s AND user_id = %s
+        """, (video_id, user_id))
+        result = cursor.fetchone()
+        if result:
+            video_file_path = result[0]
+            # Delete the video record
+            cursor.execute("""
+                DELETE FROM public.videos
+                WHERE video_id = %s AND user_id = %s
+            """, (video_id, user_id))
+            connection.commit()
+            # Delete the video file from the file system
+            if video_file_path and os.path.exists(video_file_path):
+                os.remove(video_file_path)
+                logger.info(f"Deleted user video file {video_file_path}")
+            cursor.close()
+            connection.close()
+            logger.info(f"Deleted user video {video_id} for user {user_id}")
+        else:
+            logger.error(f"Video with id {video_id} not found for user {user_id}")
+            cursor.close()
+            connection.close()
+    except Exception as error:
+        logger.error(f"Error deleting user video: {error}")
+
 
 # Define translations
 translations = {
@@ -498,8 +649,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if user_role == 'Translator':
             return await show_translator_menu(update, context)
         else:
-            # User flow remains unchanged
-            return await handle_user_flow(update, context)
+            return await show_user_menu(update, context)
+
     elif db_user_id is None and user_language is None and user_role is None:
         # User does not exist, ask for language selection
         return await prompt_language_selection(update, context)
@@ -615,30 +766,130 @@ async def role_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if role_value == 'Translator':
         return await show_translator_menu(update, context)
     else:
-        return await handle_user_flow(update, context)
+        return await show_user_menu(update, context)
 
 # Handle user flow
 async def handle_user_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    video_path, sentence = get_random_translator_video()
+    user_language = context.user_data.get('language', 'English')
+    logger.info(f"Handling user flow for language: {user_language}")
+    
+    video_path, sentence = get_random_translator_video(user_language, context)
+    
+    if video_path:
+        logger.info(f"Retrieved video path: {video_path}")
+        if os.path.exists(video_path):
+            try:
+                with open(video_path, 'rb') as video_file:
+                    await update.message.reply_video(video_file)
+                    if sentence:
+                        await update.message.reply_text(
+                            get_translation(context, 'translated_sentence').format(sentence)
+                        )
 
-    if video_path and os.path.exists(video_path):
-        # Send the video and the associated sentence if it exists
-        with open(video_path, 'rb') as video_file:
-            await update.message.reply_video(video_file)
-            if sentence:
+                reply_keyboard = [[get_translation(context, 'cancel_button')]]
                 await update.message.reply_text(
-                    get_translation(context, 'translated_sentence').format(sentence)
+                    get_translation(context, 'user_prompt'),
+                    reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
                 )
-
-        reply_keyboard = [[get_translation(context, 'cancel_button')]]
-        await update.message.reply_text(
-            get_translation(context, 'user_prompt'),
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-        )
-        return USER_REQUEST
+                return USER_REQUEST
+            except Exception as e:
+                logger.error(f"Error sending video: {e}")
+                await update.message.reply_text(
+                    "Sorry, there was an error processing the video. Please try again."
+                )
+                return ConversationHandler.END
+        else:
+            logger.error(f"Video file not found at path: {video_path}")
+            await update.message.reply_text(
+                "Sorry, there was an error accessing the video file. Please try again."
+            )
+            return ConversationHandler.END
     else:
-        await update.message.reply_text(get_translation(context, 'no_videos_available'))
+        logger.warning(f"No videos available for language: {user_language}")
+        await update.message.reply_text(
+            f"Sorry, no videos are currently available in {user_language}. Please try again later."
+        )
         return ConversationHandler.END
+
+async def handle_view_user_videos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the 'View Your Videos' option for the user."""
+    user_id = context.user_data.get('user_id')
+    if not user_id:
+        await send_message(update, get_translation(context, 'bot_restarted'))
+        return ConversationHandler.END
+
+    # Fetch user's videos and corresponding translator videos
+    user_videos = get_user_videos_and_translator_videos(user_id)
+
+    if not user_videos:
+        await send_message(update, "You have not uploaded any videos yet.")
+        return await show_user_menu(update, context)
+
+    for video_pair in user_videos:
+        user_video_id = video_pair['user_video_id']
+        user_video_path = video_pair['user_video_path']
+        translator_video_path = video_pair['translator_video_path']
+
+        # Send the translator video
+        if translator_video_path and os.path.exists(translator_video_path):
+            with open(translator_video_path, 'rb') as video_file:
+                await send_message(update, "Translator Video:")
+                await update.message.reply_video(video_file)
+
+        # Send the user's video
+        if user_video_path and os.path.exists(user_video_path):
+            with open(user_video_path, 'rb') as video_file:
+                await send_message(update, "Your Video:")
+                await update.message.reply_video(video_file)
+
+        # Add a delete button under each pair
+        delete_button = InlineKeyboardButton(
+            text="Delete",
+            callback_data=f"delete_user_video_{user_video_id}"
+        )
+        keyboard = InlineKeyboardMarkup([[delete_button]])
+        await send_message(
+            update,
+            "To delete your video, press the button below:",
+            reply_markup=keyboard
+        )
+
+    # Provide 'Go back' button
+    await send_message(
+        update,
+        "You can go back to the menu by selecting an option below.",
+        reply_markup=ReplyKeyboardMarkup([[get_translation(context, 'start_button')]], one_time_keyboard=True)
+    )
+
+    # Set the state to a new state for handling the delete callbacks
+    return USER_VIEW_VIDEOS
+
+async def handle_delete_user_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the deletion of a user's video when 'Delete' button is pressed."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    match = re.match(r"delete_user_video_(\d+)", data)
+    if match:
+        user_video_id = int(match.group(1))
+        user_id = context.user_data.get('user_id')
+
+        if not user_id:
+            await send_message(update, get_translation(context, 'bot_restarted'))
+            return ConversationHandler.END
+
+        # Delete the user's video
+        delete_user_video(user_video_id, user_id)
+
+        # Inform the user
+        await query.message.reply_text("Your video has been deleted.")
+
+        # Refresh the list
+        return await handle_view_user_videos(update, context)
+    else:
+        logger.error(f"Invalid callback data: {data}")
+        return USER_VIEW_VIDEOS
+
 
 # Display the translator menu options
 async def show_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -658,6 +909,24 @@ async def show_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
     )
     return TRANSLATOR_MENU
+
+async def show_user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Display the user menu options."""
+    menu_translations = add_user_menu_translations()
+    language = context.user_data.get('language', 'English')
+
+    reply_keyboard = [
+        [menu_translations['request_video'][language]],
+        [menu_translations['view_videos'][language]],
+        [get_translation(context, 'cancel_button')]
+    ]
+
+    await send_message(
+        update,
+        menu_translations['user_menu'][language],
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+    )
+    return USER_MENU
 
 
 # Handle translator menu selections
@@ -700,6 +969,34 @@ async def handle_translator_menu(update: Update, context: ContextTypes.DEFAULT_T
         return await cancel(update, context)
 
     return TRANSLATOR_MENU
+
+
+async def handle_user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle user menu selections."""
+    menu_translations = add_user_menu_translations()
+    language = context.user_data.get('language', 'English')
+    user_choice = update.message.text
+
+    if user_choice == menu_translations['request_video'][language]:
+        return await handle_user_flow(update, context)
+    elif user_choice == menu_translations['view_videos'][language]:
+        # Proceed to display user's uploaded videos
+        return await handle_view_user_videos(update, context)
+    elif user_choice == get_translation(context, 'cancel_button'):
+        return await cancel(update, context)
+    else:
+        return await show_user_menu(update, context)
+
+async def user_videos_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle navigation within the 'View Your Videos' menu."""
+    user_input = update.message.text if update.message else None
+    if user_input == get_translation(context, 'start_button'):
+        # Go back to user menu
+        return await show_user_menu(update, context)
+    else:
+        # Unrecognized input, prompt again
+        await send_message(update, "Please select an option.")
+        return USER_VIEW_VIDEOS
 
 # Handle editing sentences
 async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -880,48 +1177,49 @@ async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # Handle user video request and upload
 async def user_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # Check if user typed /start
     if update.message.text and update.message.text == '/start':
-        # Call the existing start function
         return await start(update, context)
 
     if update.message.video:
         user_id = context.user_data.get('user_id')
         username = context.user_data.get('username')
+        user_language = context.user_data.get('language', 'English')
+        # Get the translator video ID that the user is responding to
+        translator_video_id = context.user_data.get('current_translator_video_id')
 
         if not user_id:
             await send_message(update, get_translation(context, 'bot_restarted'))
             return ConversationHandler.END
 
+        # Retrieve the text_id of the translator's video
+        translator_text_id = get_video_text_id(translator_video_id)
+
         file_path = get_next_available_filename(USER_DIR, username, "user")
-
-        # Get user's language from context
-        user_language = context.user_data.get('language', 'unknown')
-
-        # Download the video
         await download_video(update.message.video, file_path, context)
+        
+        # Save the response video with reference to the translator video and sentence_id
+        save_video_info(
+            user_id=user_id,
+            file_path=file_path,
+            language=user_language,
+            sentence=None,
+            reference_id=translator_video_id,
+            sentence_id=translator_text_id
+        )
 
-        # Save video information with language
-        save_video_info(user_id, file_path, user_language)
+        await update.message.reply_text(get_translation(context, 'thank_you_response'))
 
-        # Send confirmation and get next video
-        await update.message.reply_text(get_translation(context, 'continue_exchange'))
-
-        # Get and send the next random video
-        video_path, sentence = get_random_translator_video()
+        # Get next video
+        video_path, sentence = get_random_translator_video(user_language, context)
         if video_path and os.path.exists(video_path):
-            # Send the video and the associated sentence if it exists
             with open(video_path, 'rb') as video_file:
                 await update.message.reply_video(video_file)
                 if sentence:
                     await update.message.reply_text(
                         get_translation(context, 'translated_sentence').format(sentence)
                     )
-
-            # Continue in the same state to allow another video upload
             return USER_REQUEST
         else:
-            # If no more videos are available, end the conversation
             await update.message.reply_text(
                 get_translation(context, 'no_more_videos'),
                 reply_markup=ReplyKeyboardMarkup([[get_translation(context, 'start_button')]], one_time_keyboard=True)
@@ -930,6 +1228,29 @@ async def user_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await update.message.reply_text(get_translation(context, 'valid_video_error'))
         return USER_REQUEST
+
+def save_video_info_with_reference(user_id, file_path, language, reference_video_id=None):
+    """
+    Saves video information to the database with optional reference to translator video.
+    """
+    connection = connect_to_db()
+    full_file_path = os.path.abspath(file_path)
+    full_file_path = full_file_path.replace('\\', '/')
+    if not connection:
+        return
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            INSERT INTO public.videos 
+            (user_id, file_path, language, video_reference_id, uploaded_at)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+        """, (user_id, full_file_path, language, reference_video_id))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        logger.info(f"Video information saved for user {user_id} with reference to video {reference_video_id}")
+    except Exception as error:
+        logger.error(f"Error saving video information to database: {error}")
 
 # Cancel operation
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -987,9 +1308,10 @@ def main() -> None:
                 MessageHandler(filters.VIDEO | (filters.TEXT & ~filters.COMMAND), handle_video_upload),
                 CommandHandler("start", start)
             ],
-            USER_REQUEST: [
-                MessageHandler(filters.VIDEO | (filters.TEXT & ~filters.COMMAND), user_video_request),
-                CommandHandler("start", start)
+            USER_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_menu)],
+            USER_VIEW_VIDEOS: [
+                CallbackQueryHandler(handle_delete_user_video),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, user_videos_navigation)
             ],
             EDIT_SENTENCES: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_sentences_navigation),
