@@ -2,7 +2,7 @@ import logging
 import os
 import re
 import psycopg2
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaVideo
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 # Replace with your actual bot token
@@ -336,6 +336,16 @@ def add_translator_menu_translations():
             'English': "The sentence has been deleted.",
             'German': "Der Satz wurde gelöscht.",
             'Azerbaijani': "Cümlə silindi."
+        },
+        'previous': {
+            'English': "Previous",
+            'German': "Zurück",
+            'Azerbaijani': "Əvvəlki"
+        },
+        'next': {
+            'English': "Next",
+            'German': "Weiter",
+            'Azerbaijani': "Növbəti"
         }
     }
     return menu_translations
@@ -999,7 +1009,7 @@ async def user_videos_navigation(update: Update, context: ContextTypes.DEFAULT_T
 
 # Handle editing sentences
 async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle the 'Edit Sentences' option for the translator."""
+    """Handle the 'Edit Sentences' option for the translator with paging."""
     menu_translations = add_translator_menu_translations()
     language = context.user_data.get('language', 'English')
     user_id = context.user_data.get('user_id')
@@ -1015,43 +1025,113 @@ async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TY
         await send_message(update, menu_translations['no_sentences_found'][language])
         return await show_translator_menu(update, context)
 
-    for sentence_id, sentence_content, video_file_path in sentences_videos:
-        # Send the sentence text
-        await send_message(update, f"• {sentence_content}")
+    # Store sentences_videos and current index in user_data
+    context.user_data['sentences_videos'] = sentences_videos
+    context.user_data['current_index'] = 0
 
-        # Send the associated video if exists
-        if video_file_path and os.path.exists(video_file_path):
-            with open(video_file_path, 'rb') as video_file:
-                if update.message:
-                    await update.message.reply_video(video_file)
-                elif update.callback_query:
-                    await update.callback_query.message.reply_video(video_file)
-
-        # Send the 'Delete' button
-        delete_button = InlineKeyboardButton(
-            text=menu_translations['delete_sentence'][language],
-            callback_data=f"delete_{sentence_id}"
-        )
-        keyboard = InlineKeyboardMarkup([[delete_button]])
-        await send_message(
-            update,
-            menu_translations['delete_sentence_prompt'][language],
-            reply_markup=keyboard
-        )
-
-    # Provide 'Go back' button
-    go_back_button = [[menu_translations['go_back'][language]]]
-    await send_message(
-        update,
-        menu_translations['edit_menu_prompt'][language],
-        reply_markup=ReplyKeyboardMarkup(go_back_button, one_time_keyboard=True)
-    )
+    # Call function to display the current sentence-video pair
+    await display_current_sentence_video(update, context)
 
     return EDIT_SENTENCES
 
+async def display_current_sentence_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    menu_translations = add_translator_menu_translations()
+    language = context.user_data.get('language', 'English')
+
+    sentences_videos = context.user_data.get('sentences_videos', [])
+    current_index = context.user_data.get('current_index', 0)
+
+    if len(sentences_videos) == 0:
+        # No sentences left, return to menu
+        await send_message(update, menu_translations['no_sentences_found'][language])
+        return await show_translator_menu(update, context)
+
+    if current_index >= len(sentences_videos):
+        current_index = len(sentences_videos) - 1
+        context.user_data['current_index'] = current_index
+    elif current_index < 0:
+        current_index = 0
+        context.user_data['current_index'] = current_index
+
+    sentence_id, sentence_content, video_file_path = sentences_videos[current_index]
+
+    # Prepare buttons
+    buttons = []
+
+    # Add 'Delete' button
+    delete_button = InlineKeyboardButton(
+        text=menu_translations['delete_sentence'][language],
+        callback_data=f"delete_{sentence_id}"
+    )
+    buttons.append([delete_button])
+
+    # Add 'Previous' and 'Next' buttons in one horizontal line
+    nav_buttons = []
+    if current_index > 0:
+        prev_button = InlineKeyboardButton(
+            text=menu_translations.get('previous', {}).get(language, "Previous"),
+            callback_data="previous_sentence"
+        )
+        nav_buttons.append(prev_button)
+    if current_index < len(sentences_videos) - 1:
+        next_button = InlineKeyboardButton(
+            text=menu_translations.get('next', {}).get(language, "Next"),
+            callback_data="next_sentence"
+        )
+        nav_buttons.append(next_button)
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    keyboard = InlineKeyboardMarkup(buttons)
+
+    # Send or edit the video with caption and buttons
+    if 'message_id' in context.user_data:
+        # Edit existing message
+        message_id = context.user_data['message_id']
+        chat_id = update.effective_chat.id
+
+        if video_file_path and os.path.exists(video_file_path):
+            with open(video_file_path, 'rb') as video_file:
+                media = InputMediaVideo(media=video_file, caption=f"• {sentence_content}")
+                try:
+                    await context.bot.edit_message_media(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        media=media,
+                        reply_markup=keyboard
+                    )
+                except Exception as e:
+                    logger.error(f"Error editing message media: {e}")
+        else:
+            await send_message(update, "Video file not found.")
+            return
+    else:
+        # Send new message
+        if video_file_path and os.path.exists(video_file_path):
+            with open(video_file_path, 'rb') as video_file:
+                sent_message = await context.bot.send_video(
+                    chat_id=update.effective_chat.id,
+                    video=video_file,
+                    caption=f"• {sentence_content}",
+                    reply_markup=keyboard
+                )
+                message_id = sent_message.message_id
+                context.user_data['message_id'] = message_id
+        else:
+            await send_message(update, "Video file not found.")
+            return
+
+    # Ensure the translator menu is always present
+    # Set the reply keyboard for translator menu
+    translator_menu_keyboard = [
+        [menu_translations['view_sentences'][language], menu_translations['write_sentence'][language]],
+        [menu_translations['edit_sentences'][language], menu_translations['change_language'][language]],
+        [get_translation(context, 'cancel_button')]
+    ]
+    reply_keyboard = ReplyKeyboardMarkup(translator_menu_keyboard, one_time_keyboard=False)
+    
 # Handle deletion of sentences
 async def handle_delete_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle the deletion of a sentence when 'Delete' button is pressed."""
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -1067,16 +1147,69 @@ async def handle_delete_sentence(update: Update, context: ContextTypes.DEFAULT_T
         # Delete the sentence and associated video
         delete_sentence_and_video(sentence_id, user_id)
 
-        # Inform the user
-        language = context.user_data.get('language', 'English')
-        await query.message.reply_text(
-            add_translator_menu_translations()['sentence_deleted'][language]
-        )
-        # Refresh the list
-        return await handle_edit_sentences(update, context)
+        # Remove the sentence from the list and adjust current_index
+        sentences_videos = context.user_data.get('sentences_videos', [])
+        current_index = context.user_data.get('current_index', 0)
+        for i, (s_id, _, _) in enumerate(sentences_videos):
+            if s_id == sentence_id:
+                del sentences_videos[i]
+                if current_index >= len(sentences_videos):
+                    current_index = len(sentences_videos) - 1
+                context.user_data['current_index'] = current_index
+                break
+
+        context.user_data['sentences_videos'] = sentences_videos
+
+        # Delete the message to cause the visual effect
+        chat_id = update.effective_chat.id
+        message_id = context.user_data.get('message_id')
+        if message_id:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            except Exception as e:
+                logger.error(f"Error deleting message {message_id}: {e}")
+            del context.user_data['message_id']
+
+        # If no sentences left, inform the user and return to menu
+        if not sentences_videos:
+            language = context.user_data.get('language', 'English')
+            await query.message.reply_text(
+                add_translator_menu_translations()['no_sentences_found'][language],
+                reply_markup=ReplyKeyboardMarkup(translator_menu_keyboard, one_time_keyboard=False)
+            )
+            return await show_translator_menu(update, context)
+
+        # Display the current sentence-video pair
+        await display_current_sentence_video(update, context)
+        return EDIT_SENTENCES
     else:
         logger.error(f"Invalid callback data: {data}")
         return EDIT_SENTENCES
+    
+    
+async def handle_next_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    # Increment the current index
+    context.user_data['current_index'] += 1
+
+    # Display the next sentence-video pair
+    await display_current_sentence_video(update, context)
+
+    return EDIT_SENTENCES
+
+async def handle_previous_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    # Decrement the current index
+    context.user_data['current_index'] -= 1
+
+    # Display the previous sentence-video pair
+    await display_current_sentence_video(update, context)
+
+    return EDIT_SENTENCES
 
 # Handle navigation in 'Edit Sentences' menu
 async def edit_sentences_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1317,9 +1450,11 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, user_videos_navigation)
             ],
             EDIT_SENTENCES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_sentences_navigation),
-                CallbackQueryHandler(handle_delete_sentence)
-            ],
+            MessageHandler(filters.TEXT & ~filters.COMMAND, edit_sentences_navigation),
+            CallbackQueryHandler(handle_delete_sentence, pattern=r"^delete_\d+$"),
+            CallbackQueryHandler(handle_next_sentence, pattern="^next_sentence$"),
+            CallbackQueryHandler(handle_previous_sentence, pattern="^previous_sentence$"),
+        ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
