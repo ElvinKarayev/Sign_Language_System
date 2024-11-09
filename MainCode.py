@@ -6,7 +6,7 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKey
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 # Replace with your actual bot token
-BOTOKEN = "YOUR TOKEN HERE"
+BOTOKEN = "7383040553:AAE8DlZSc0PKB-UbsY5eZRB6lQmBSpuxnJU"
 
 # Enable logging
 logging.basicConfig(
@@ -16,11 +16,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Define states for conversation flow
-LANGUAGE_SELECTION, ASK_PERMISSION, ROLE_SELECTION, TRANSLATOR_UPLOAD, USER_REQUEST = range(5)
-TRANSLATOR_MENU, WRITE_SENTENCE = range(5, 7)  # Continue from your last state number
-EDIT_SENTENCES = range(7, 8)  # New state for editing sentences
-USER_MENU = 8
-USER_VIEW_VIDEOS = 9
+(LANGUAGE_SELECTION, ASK_PERMISSION, ROLE_SELECTION, TRANSLATOR_UPLOAD, USER_REQUEST,
+ TRANSLATOR_MENU, WRITE_SENTENCE, EDIT_SENTENCES, USER_MENU, USER_VIEW_VIDEOS) = range(10)
+
+
 
 # Define directories for downloading videos
 TRANSLATOR_DIR = './Video/Translator'
@@ -37,7 +36,7 @@ def connect_to_db():
         connection = psycopg2.connect(
             dbname="sdp_telegram_bot2",
             user="postgres",
-            password="your pass here",  # Replace with your actual password
+            password="murad2005",  # Replace with your actual password
             host="localhost",
             port="5432"
         )
@@ -541,7 +540,7 @@ def delete_user_video(video_id, user_id):
 # Define translations
 translations = {
     'English': {
-        'consent_message': "Hi! To proceed, we need your consent to use the videos you provide for translation. Please confirm.",
+        'consent_message': "Dear Contributor, Thank you very much for the assistance you have provided us! The videos you have sent are being used to promote, disseminate, and teach sign language. If you consent to the use of these videos for research purposes…",
         'confirm_button': "Confirm",
         'cancel_button': "Cancel",
         'choose_role': "Are you a Translator or a User?",
@@ -564,7 +563,7 @@ translations = {
         'start_button': "/start"
     },
     'German': {
-        'consent_message': "Hallo! Um fortzufahren, benötigen wir Ihre Zustimmung zur Verwendung der von Ihnen bereitgestellten Videos zur Übersetzung. Bitte bestätigen Sie.",
+        'consent_message': "Sehr geehrter Mitwirkender, Vielen Dank für die Unterstützung, die Sie uns gegeben haben! Die von Ihnen gesendeten Videos werden genutzt, um die Gebärdensprache zu fördern, zu verbreiten und zu lehren. Wenn Sie der Nutzung dieser Videos zu Forschungszwecken zustimmen…",
         'confirm_button': "Bestätigen",
         'cancel_button': "Abbrechen",
         'choose_role': "Sind Sie ein Übersetzer oder ein Benutzer?",
@@ -587,7 +586,7 @@ translations = {
         'start_button': "/start"
     },
     'Azerbaijani': {
-        'consent_message': "Salam! Davam etmək üçün təqdim etdiyiniz videoların tərcüməsi üçün istifadəsinə razılıq verməyiniz lazımdır. Təsdiq edin.",
+        'consent_message': "Hörmətli şəxs, bizə göstərdiyiniz kömək üçün çox sağolun! Göndərdiyiniz videolar işarə dilinin yayılması, təşviqi və öyrənilməsi məqsədilə istifadə olunur. Əgər göndərdiyiniz videoların elmi-tədqiqat məqsədilə istifadə edilməsini təstiq edirsinizsə...",
         'confirm_button': "Təsdiq edin",
         'cancel_button': "Ləğv edin",
         'choose_role': "Tərcüməçi, yoxsa istifadəçisiniz?",
@@ -1308,6 +1307,10 @@ def main() -> None:
                 MessageHandler(filters.VIDEO | (filters.TEXT & ~filters.COMMAND), handle_video_upload),
                 CommandHandler("start", start)
             ],
+            USER_REQUEST: [
+                MessageHandler(filters.VIDEO | (filters.TEXT & ~filters.COMMAND), user_video_request),
+                CommandHandler("start", start)
+            ],
             USER_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_menu)],
             USER_VIEW_VIDEOS: [
                 CallbackQueryHandler(handle_delete_user_video),
@@ -1320,6 +1323,8 @@ def main() -> None:
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
+
+
 
     application.add_handler(conv_handler)
 
