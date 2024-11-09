@@ -413,8 +413,8 @@ def get_all_sentences(language: str) -> list:
         logger.error(f"Error retrieving sentences: {error}")
         return []
 
-def get_sentences_and_videos(user_id):
-    """Fetch sentences and associated videos for a given user_id."""
+def get_sentences_and_videos(user_id, language):
+    """Fetch sentences and associated videos for a given user_id and language."""
     if not user_id:
         return []
     connection = connect_to_db()
@@ -426,9 +426,9 @@ def get_sentences_and_videos(user_id):
             SELECT s.sentence_id, s.sentence_content, v.file_path
             FROM public.sentences s
             LEFT JOIN public.videos v ON s.sentence_id = v.text_id
-            WHERE s.user_id = %s
+            WHERE s.user_id = %s AND s.sentence_language = %s
             ORDER BY s.sentence_id DESC
-        """, (user_id,))
+        """, (user_id, language))
         results = cursor.fetchall()
         cursor.close()
         connection.close()
@@ -437,6 +437,7 @@ def get_sentences_and_videos(user_id):
     except Exception as error:
         logger.error(f"Error fetching sentences and videos: {error}")
         return []
+
 
 def delete_sentence_and_video(sentence_id, user_id):
     """Delete a sentence and its associated video from the database and file system."""
@@ -1018,8 +1019,8 @@ async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TY
         await send_message(update, get_translation(context, 'bot_restarted'))
         return ConversationHandler.END
 
-    # Fetch sentences and associated videos for this translator
-    sentences_videos = get_sentences_and_videos(user_id)
+    # Fetch sentences and associated videos for this translator and language
+    sentences_videos = get_sentences_and_videos(user_id, language)
 
     if not sentences_videos:
         await send_message(update, menu_translations['no_sentences_found'][language])
@@ -1029,10 +1030,21 @@ async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data['sentences_videos'] = sentences_videos
     context.user_data['current_index'] = 0
 
+    # Send the 'Go back' message and keyboard
+    translator_menu_keyboard = [[menu_translations['go_back'][language]]]
+    reply_keyboard = ReplyKeyboardMarkup(translator_menu_keyboard, one_time_keyboard=False)
+
+    await send_message(
+        update,
+        menu_translations['edit_menu_prompt'][language],
+        reply_markup=reply_keyboard
+    )
+
     # Call function to display the current sentence-video pair
     await display_current_sentence_video(update, context)
 
     return EDIT_SENTENCES
+
 
 async def display_current_sentence_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     menu_translations = add_translator_menu_translations()
@@ -1108,27 +1120,18 @@ async def display_current_sentence_video(update: Update, context: ContextTypes.D
     else:
         # Send new message
         if video_file_path and os.path.exists(video_file_path):
-            with open(video_file_path, 'rb') as video_file:
-                sent_message = await context.bot.send_video(
-                    chat_id=update.effective_chat.id,
-                    video=video_file,
-                    caption=f"• {sentence_content}",
-                    reply_markup=keyboard
-                )
-                message_id = sent_message.message_id
-                context.user_data['message_id'] = message_id
+            sent_message = await context.bot.send_video(
+                chat_id=update.effective_chat.id,
+                video=open(video_file_path, 'rb'),
+                caption=f"• {sentence_content}",
+                reply_markup=keyboard
+            )
+            message_id = sent_message.message_id
+            context.user_data['message_id'] = message_id
         else:
             await send_message(update, "Video file not found.")
             return
 
-    # Ensure the translator menu is always present
-    # Set the reply keyboard for translator menu
-    translator_menu_keyboard = [
-        [menu_translations['view_sentences'][language], menu_translations['write_sentence'][language]],
-        [menu_translations['edit_sentences'][language], menu_translations['change_language'][language]],
-        [get_translation(context, 'cancel_button')]
-    ]
-    reply_keyboard = ReplyKeyboardMarkup(translator_menu_keyboard, one_time_keyboard=False)
     
 # Handle deletion of sentences
 async def handle_delete_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
