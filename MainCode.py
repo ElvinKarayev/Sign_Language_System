@@ -1030,6 +1030,9 @@ async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data['sentences_videos'] = sentences_videos
     context.user_data['current_index'] = 0
 
+    # Reset 'message_id' to ensure a new message is sent
+    context.user_data.pop('message_id', None)
+
     # Send the 'Go back' message and keyboard
     translator_menu_keyboard = [[menu_translations['go_back'][language]]]
     reply_keyboard = ReplyKeyboardMarkup(translator_menu_keyboard, one_time_keyboard=False)
@@ -1044,6 +1047,7 @@ async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TY
     await display_current_sentence_video(update, context)
 
     return EDIT_SENTENCES
+
 
 
 async def display_current_sentence_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
