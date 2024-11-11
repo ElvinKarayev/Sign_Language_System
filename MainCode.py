@@ -878,7 +878,6 @@ async def display_current_user_video_group(update: Update, context: ContextTypes
     user_video_id = video_pair['user_video_id']
     user_video_path = video_pair['user_video_path']
     translator_video_path = video_pair['translator_video_path']
-    # No need for 'sentence' since we don't display it
 
     # Prepare buttons
     buttons = []
@@ -909,55 +908,99 @@ async def display_current_user_video_group(update: Update, context: ContextTypes
 
     keyboard = InlineKeyboardMarkup(buttons)
 
-    # Delete previous messages if any
     chat_id = update.effective_chat.id
     message_ids = context.user_data.get('message_ids', {})
-    for message_id in message_ids.values():
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-        except Exception as e:
-            logger.error(f"Error deleting message {message_id}: {e}")
 
-    # Send new messages and store their IDs
-    message_ids = {}
-
-    # Send translator video
-    if translator_video_path and os.path.exists(translator_video_path):
-        with open(translator_video_path, 'rb') as video_file:
-            sent_message = await context.bot.send_video(
+    # Send or edit translator video
+    if 'translator' in message_ids:
+        # Edit existing message
+        message_id = message_ids['translator']
+        if translator_video_path and os.path.exists(translator_video_path):
+            with open(translator_video_path, 'rb') as video_file:
+                media = InputMediaVideo(media=video_file, caption="Translator Video")
+                try:
+                    await context.bot.edit_message_media(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        media=media
+                    )
+                except Exception as e:
+                    logger.error(f"Error editing translator video message: {e}")
+        else:
+            # If video not available, edit message text
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="Translator Video not available"
+                )
+            except Exception as e:
+                logger.error(f"Error editing translator video message text: {e}")
+    else:
+        # Send new message
+        if translator_video_path and os.path.exists(translator_video_path):
+            with open(translator_video_path, 'rb') as video_file:
+                sent_message = await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=video_file,
+                    caption="Translator Video"
+                )
+                message_ids['translator'] = sent_message.message_id
+        else:
+            sent_message = await context.bot.send_message(
                 chat_id=chat_id,
-                video=video_file,
-                caption="Translator Video"
+                text="Translator Video not available"
             )
             message_ids['translator'] = sent_message.message_id
-    else:
-        sent_message = await context.bot.send_message(
-            chat_id=chat_id,
-            text="Translator Video not available"
-        )
-        message_ids['translator'] = sent_message.message_id
 
-    # Send user's video with buttons
-    if user_video_path and os.path.exists(user_video_path):
-        with open(user_video_path, 'rb') as video_file:
-            sent_message = await context.bot.send_video(
+    # Send or edit user's video with buttons
+    if 'user' in message_ids:
+        # Edit existing message
+        message_id = message_ids['user']
+        if user_video_path and os.path.exists(user_video_path):
+            with open(user_video_path, 'rb') as video_file:
+                media = InputMediaVideo(media=video_file, caption="Your Video")
+                try:
+                    await context.bot.edit_message_media(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        media=media,
+                        reply_markup=keyboard
+                    )
+                except Exception as e:
+                    logger.error(f"Error editing user video message: {e}")
+        else:
+            # If video not available, edit message text
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="Your Video not available",
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                logger.error(f"Error editing user video message text: {e}")
+    else:
+        # Send new message
+        if user_video_path and os.path.exists(user_video_path):
+            with open(user_video_path, 'rb') as video_file:
+                sent_message = await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=video_file,
+                    caption="Your Video",
+                    reply_markup=keyboard
+                )
+                message_ids['user'] = sent_message.message_id
+        else:
+            sent_message = await context.bot.send_message(
                 chat_id=chat_id,
-                video=video_file,
-                caption="Your Video",
+                text="Your Video not available",
                 reply_markup=keyboard
             )
             message_ids['user'] = sent_message.message_id
-    else:
-        sent_message = await context.bot.send_message(
-            chat_id=chat_id,
-            text="Your Video not available",
-            reply_markup=keyboard
-        )
-        message_ids['user'] = sent_message.message_id
-
-    # No need to send the sentence
 
     context.user_data['message_ids'] = message_ids
+
 
 
 async def handle_next_user_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -983,6 +1026,7 @@ async def handle_previous_user_video(update: Update, context: ContextTypes.DEFAU
     await display_current_user_video_group(update, context)
 
     return USER_VIEW_VIDEOS
+
 
 
 async def handle_delete_user_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1015,7 +1059,7 @@ async def handle_delete_user_video(update: Update, context: ContextTypes.DEFAULT
 
         context.user_data['user_videos'] = user_videos
 
-        # Delete the messages
+        # Delete the messages to create the visual effect
         chat_id = update.effective_chat.id
         message_ids = context.user_data.get('message_ids', {})
         for message_id in message_ids.values():
