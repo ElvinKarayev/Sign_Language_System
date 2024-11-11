@@ -504,11 +504,13 @@ def get_user_videos_and_translator_videos(user_id):
                 'user_video_id': row[0],
                 'user_video_path': row[1],
                 'translator_video_path': row[2]
+                # No need for 'sentence'
             })
         return videos
     except Exception as error:
         logger.error(f"Error fetching user's videos: {error}")
         return []
+
 
 def delete_user_video(video_id, user_id):
     """Delete a user's video from the database and file system."""
@@ -822,7 +824,7 @@ async def handle_user_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return ConversationHandler.END
 
 async def handle_view_user_videos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle the 'View Your Videos' option for the user."""
+    """Handle the 'View Your Videos' option for the user with paging."""
     user_id = context.user_data.get('user_id')
     if not user_id:
         await send_message(update, get_translation(context, 'bot_restarted'))
@@ -835,44 +837,153 @@ async def handle_view_user_videos(update: Update, context: ContextTypes.DEFAULT_
         await send_message(update, "You have not uploaded any videos yet.")
         return await show_user_menu(update, context)
 
-    for video_pair in user_videos:
-        user_video_id = video_pair['user_video_id']
-        user_video_path = video_pair['user_video_path']
-        translator_video_path = video_pair['translator_video_path']
+    # Store user_videos and current index in user_data
+    context.user_data['user_videos'] = user_videos
+    context.user_data['current_index'] = 0
 
-        # Send the translator video
-        if translator_video_path and os.path.exists(translator_video_path):
-            with open(translator_video_path, 'rb') as video_file:
-                await send_message(update, "Translator Video:")
-                await update.message.reply_video(video_file)
+    # Reset 'message_ids' to ensure a new message is sent
+    context.user_data.pop('message_ids', None)
 
-        # Send the user's video
-        if user_video_path and os.path.exists(user_video_path):
-            with open(user_video_path, 'rb') as video_file:
-                await send_message(update, "Your Video:")
-                await update.message.reply_video(video_file)
+    # Send the 'Go back' message and keyboard
+    reply_keyboard = ReplyKeyboardMarkup([[get_translation(context, 'start_button')]], one_time_keyboard=False)
 
-        # Add a delete button under each pair
-        delete_button = InlineKeyboardButton(
-            text="Delete",
-            callback_data=f"delete_user_video_{user_video_id}"
-        )
-        keyboard = InlineKeyboardMarkup([[delete_button]])
-        await send_message(
-            update,
-            "To delete your video, press the button below:",
-            reply_markup=keyboard
-        )
-
-    # Provide 'Go back' button
     await send_message(
         update,
         "You can go back to the menu by selecting an option below.",
-        reply_markup=ReplyKeyboardMarkup([[get_translation(context, 'start_button')]], one_time_keyboard=True)
+        reply_markup=reply_keyboard
     )
 
-    # Set the state to a new state for handling the delete callbacks
+    # Call function to display the current user video group
+    await display_current_user_video_group(update, context)
+
     return USER_VIEW_VIDEOS
+
+async def display_current_user_video_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_videos = context.user_data.get('user_videos', [])
+    current_index = context.user_data.get('current_index', 0)
+
+    if len(user_videos) == 0:
+        # No videos left, return to menu
+        await send_message(update, "You have not uploaded any videos yet.")
+        return await show_user_menu(update, context)
+
+    if current_index >= len(user_videos):
+        current_index = len(user_videos) - 1
+        context.user_data['current_index'] = current_index
+    elif current_index < 0:
+        current_index = 0
+        context.user_data['current_index'] = current_index
+
+    video_pair = user_videos[current_index]
+    user_video_id = video_pair['user_video_id']
+    user_video_path = video_pair['user_video_path']
+    translator_video_path = video_pair['translator_video_path']
+    # No need for 'sentence' since we don't display it
+
+    # Prepare buttons
+    buttons = []
+
+    # Add 'Delete' button
+    delete_button = InlineKeyboardButton(
+        text="Delete",
+        callback_data=f"delete_user_video_{user_video_id}"
+    )
+    buttons.append([delete_button])
+
+    # Add 'Previous' and 'Next' buttons in one horizontal line
+    nav_buttons = []
+    if current_index > 0:
+        prev_button = InlineKeyboardButton(
+            text="Previous",
+            callback_data="previous_user_video"
+        )
+        nav_buttons.append(prev_button)
+    if current_index < len(user_videos) - 1:
+        next_button = InlineKeyboardButton(
+            text="Next",
+            callback_data="next_user_video"
+        )
+        nav_buttons.append(next_button)
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    keyboard = InlineKeyboardMarkup(buttons)
+
+    # Delete previous messages if any
+    chat_id = update.effective_chat.id
+    message_ids = context.user_data.get('message_ids', {})
+    for message_id in message_ids.values():
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception as e:
+            logger.error(f"Error deleting message {message_id}: {e}")
+
+    # Send new messages and store their IDs
+    message_ids = {}
+
+    # Send translator video
+    if translator_video_path and os.path.exists(translator_video_path):
+        with open(translator_video_path, 'rb') as video_file:
+            sent_message = await context.bot.send_video(
+                chat_id=chat_id,
+                video=video_file,
+                caption="Translator Video"
+            )
+            message_ids['translator'] = sent_message.message_id
+    else:
+        sent_message = await context.bot.send_message(
+            chat_id=chat_id,
+            text="Translator Video not available"
+        )
+        message_ids['translator'] = sent_message.message_id
+
+    # Send user's video with buttons
+    if user_video_path and os.path.exists(user_video_path):
+        with open(user_video_path, 'rb') as video_file:
+            sent_message = await context.bot.send_video(
+                chat_id=chat_id,
+                video=video_file,
+                caption="Your Video",
+                reply_markup=keyboard
+            )
+            message_ids['user'] = sent_message.message_id
+    else:
+        sent_message = await context.bot.send_message(
+            chat_id=chat_id,
+            text="Your Video not available",
+            reply_markup=keyboard
+        )
+        message_ids['user'] = sent_message.message_id
+
+    # No need to send the sentence
+
+    context.user_data['message_ids'] = message_ids
+
+
+async def handle_next_user_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    # Increment the current index
+    context.user_data['current_index'] += 1
+
+    # Display the next user video group
+    await display_current_user_video_group(update, context)
+
+    return USER_VIEW_VIDEOS
+
+async def handle_previous_user_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    # Decrement the current index
+    context.user_data['current_index'] -= 1
+
+    # Display the previous user video group
+    await display_current_user_video_group(update, context)
+
+    return USER_VIEW_VIDEOS
+
 
 async def handle_delete_user_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the deletion of a user's video when 'Delete' button is pressed."""
@@ -891,14 +1002,46 @@ async def handle_delete_user_video(update: Update, context: ContextTypes.DEFAULT
         # Delete the user's video
         delete_user_video(user_video_id, user_id)
 
-        # Inform the user
-        await query.message.reply_text("Your video has been deleted.")
+        # Remove the video from the list and adjust current_index
+        user_videos = context.user_data.get('user_videos', [])
+        current_index = context.user_data.get('current_index', 0)
+        for i, video_pair in enumerate(user_videos):
+            if video_pair['user_video_id'] == user_video_id:
+                del user_videos[i]
+                if current_index >= len(user_videos):
+                    current_index = len(user_videos) - 1
+                context.user_data['current_index'] = current_index
+                break
 
-        # Refresh the list
-        return await handle_view_user_videos(update, context)
+        context.user_data['user_videos'] = user_videos
+
+        # Delete the messages
+        chat_id = update.effective_chat.id
+        message_ids = context.user_data.get('message_ids', {})
+        for message_id in message_ids.values():
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            except Exception as e:
+                logger.error(f"Error deleting message {message_id}: {e}")
+
+        context.user_data.pop('message_ids', None)
+
+        # If no videos left, inform the user and return to menu
+        if not user_videos:
+            await query.message.reply_text(
+                "You have not uploaded any videos yet.",
+                reply_markup=ReplyKeyboardMarkup([[get_translation(context, 'start_button')]], one_time_keyboard=True)
+            )
+            return await show_user_menu(update, context)
+
+        # Display the current user video group
+        await display_current_user_video_group(update, context)
+        return USER_VIEW_VIDEOS
     else:
         logger.error(f"Invalid callback data: {data}")
         return USER_VIEW_VIDEOS
+
+
 
 
 # Display the translator menu options
@@ -1453,7 +1596,9 @@ def main() -> None:
             ],
             USER_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_menu)],
             USER_VIEW_VIDEOS: [
-                CallbackQueryHandler(handle_delete_user_video),
+                CallbackQueryHandler(handle_delete_user_video, pattern=r"^delete_user_video_\d+$"),
+                CallbackQueryHandler(handle_next_user_video, pattern="^next_user_video$"),
+                CallbackQueryHandler(handle_previous_user_video, pattern="^previous_user_video$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, user_videos_navigation)
             ],
             EDIT_SENTENCES: [
