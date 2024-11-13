@@ -19,8 +19,6 @@ logger = logging.getLogger(__name__)
 (LANGUAGE_SELECTION, ASK_PERMISSION, ROLE_SELECTION, TRANSLATOR_UPLOAD, USER_REQUEST,
  TRANSLATOR_MENU, WRITE_SENTENCE, EDIT_SENTENCES, USER_MENU, USER_VIEW_VIDEOS) = range(10)
 
-
-
 # Define directories for downloading videos
 TRANSLATOR_DIR = './Video/Translator'
 USER_DIR = './Video/User'
@@ -34,9 +32,9 @@ def connect_to_db():
     """Establishes and returns a connection to the PostgreSQL database."""
     try:
         connection = psycopg2.connect(
-            dbname="sdp_telegram_bot2",
+            dbname="sdp_project",
             user="postgres",
-            password="murad2005",  # Replace with your actual password
+            password="sdp_project",  # Replace with your actual password
             host="localhost",
             port="5432"
         )
@@ -48,6 +46,9 @@ def connect_to_db():
 
 def check_user_exists(username):
     """Checks if a user exists in the database by username and returns the user's id, language, and role if they exist."""
+    if username == "unknown_user":
+        return None, None, None  # Cannot find user without a valid username
+
     connection = connect_to_db()
     if not connection:
         return None, None, None  # Return a tuple
@@ -152,7 +153,7 @@ def save_video_info(user_id, file_path, language, sentence=None, reference_id=No
     """Saves video information and associated sentence to the database."""
     connection = connect_to_db()
     full_file_path = os.path.abspath(file_path)
-    full_file_path= full_file_path.replace('\\', '/')
+    full_file_path = full_file_path.replace('\\', '/')
     if not connection:
         return
     try:
@@ -180,12 +181,7 @@ def save_video_info(user_id, file_path, language, sentence=None, reference_id=No
     except Exception as error:
         logger.error(f"Error saving video information to database: {error}")
 
-
 def get_random_translator_video(user_language, context=None):
-    """
-    Fetches a random video from the database that was uploaded by a translator in the specified language,
-    excluding videos that the user has already responded to.
-    """
     connection = connect_to_db()
     if not connection:
         logger.error("Failed to connect to database")
@@ -203,44 +199,45 @@ def get_random_translator_video(user_language, context=None):
             LEFT JOIN sentences s ON v.text_id = s.sentence_id
             JOIN users u ON v.user_id = u.user_id
             WHERE v.language = %s
-            AND u.user_role = 'Translator'
-            AND v.video_id NOT IN (
-                SELECT uv.video_reference_id
-                FROM videos uv
-                WHERE uv.user_id = %s
-                AND uv.video_reference_id IS NOT NULL
-            )
+              AND u.user_role = 'Translator'
+              AND v.video_id NOT IN (
+                  SELECT CAST(uv.video_reference_id AS integer)
+                  FROM videos uv
+                  WHERE uv.user_id = %s
+                    AND uv.video_reference_id IS NOT NULL
+              )
         """, (user_language, user_id))
-        
+
         all_results = cursor.fetchall()
         logger.info(f"Found {len(all_results)} unwatched videos in {user_language}")
-        
+
         if all_results:
             import random
             chosen_result = random.choice(all_results)
             video_id = chosen_result[0]
             file_path = chosen_result[1]
             sentence = chosen_result[2]
-            
+
             logger.info(f"Selected video ID: {video_id}, path: {file_path}")
-            
+
             if context:
                 context.user_data['current_translator_video_id'] = video_id
-            
+
             cursor.close()
             connection.close()
             return file_path, sentence
-            
+
         cursor.close()
         connection.close()
         logger.warning(f"No unwatched videos found for language: {user_language}")
         return None, None
-        
+
     except Exception as error:
         logger.error(f"Error fetching random translator video: {error}")
         if connection:
             connection.close()
         return None, None
+
 
 def get_video_text_id(video_id):
     """Retrieve the text_id associated with a video."""
@@ -262,8 +259,6 @@ def get_video_text_id(video_id):
     except Exception as error:
         logger.error(f"Error retrieving text_id for video_id {video_id}: {error}")
         return None
-
-
 
 def add_translator_menu_translations():
     menu_translations = {
@@ -438,7 +433,6 @@ def get_sentences_and_videos(user_id, language):
         logger.error(f"Error fetching sentences and videos: {error}")
         return []
 
-
 def delete_sentence_and_video(sentence_id, user_id):
     """Delete a sentence and its associated video from the database and file system."""
     if not user_id:
@@ -475,7 +469,6 @@ def delete_sentence_and_video(sentence_id, user_id):
     except Exception as error:
         logger.error(f"Error deleting sentence and video: {error}")
 
-
 def get_user_videos_and_translator_videos(user_id):
     """Fetch user's videos and corresponding translator videos."""
     if not user_id:
@@ -510,7 +503,6 @@ def get_user_videos_and_translator_videos(user_id):
     except Exception as error:
         logger.error(f"Error fetching user's videos: {error}")
         return []
-
 
 def delete_user_video(video_id, user_id):
     """Delete a user's video from the database and file system."""
@@ -548,7 +540,6 @@ def delete_user_video(video_id, user_id):
             connection.close()
     except Exception as error:
         logger.error(f"Error deleting user video: {error}")
-
 
 # Define translations
 translations = {
@@ -629,9 +620,24 @@ def get_translation(context, key):
     return translations[language][key]
 
 # Helper Functions
-def get_user_id_from_context(context):
-    """Retrieve the user_id from context.user_data or return None if not available."""
-    return context.user_data.get('user_id')
+def get_user_id_from_context(context, update):
+    """Retrieve the user_id from context.user_data or from the database using the username."""
+    user_id = context.user_data.get('user_id')
+    if user_id:
+        return user_id
+    else:
+        # Get username from context or update
+        username = context.user_data.get('username')
+        if not username:
+            user = update.effective_user
+            username = user.username or "unknown_user"
+            context.user_data['username'] = username
+        if username and username != "unknown_user":
+            db_user_id, _, _ = check_user_exists(username)
+            if db_user_id:
+                context.user_data['user_id'] = db_user_id
+                return db_user_id
+    return None
 
 async def send_message(update: Update, text: str, reply_markup=None):
     if update.message:
@@ -696,7 +702,7 @@ async def language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Please select a valid language option.")
         return LANGUAGE_SELECTION  # Stay in the same state
 
-    user_id = get_user_id_from_context(context)
+    user_id = get_user_id_from_context(context, update)
     if not user_id and not context.user_data.get('username'):
         await send_message(update, get_translation(context, 'bot_restarted'))
         return ConversationHandler.END
@@ -784,9 +790,9 @@ async def role_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def handle_user_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_language = context.user_data.get('language', 'English')
     logger.info(f"Handling user flow for language: {user_language}")
-    
+
     video_path, sentence = get_random_translator_video(user_language, context)
-    
+
     if video_path:
         logger.info(f"Retrieved video path: {video_path}")
         if os.path.exists(video_path):
@@ -825,7 +831,7 @@ async def handle_user_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def handle_view_user_videos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the 'View Your Videos' option for the user with paging."""
-    user_id = context.user_data.get('user_id')
+    user_id = get_user_id_from_context(context, update)
     if not user_id:
         await send_message(update, get_translation(context, 'bot_restarted'))
         return ConversationHandler.END
@@ -1001,8 +1007,6 @@ async def display_current_user_video_group(update: Update, context: ContextTypes
 
     context.user_data['message_ids'] = message_ids
 
-
-
 async def handle_next_user_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -1027,8 +1031,6 @@ async def handle_previous_user_video(update: Update, context: ContextTypes.DEFAU
 
     return USER_VIEW_VIDEOS
 
-
-
 async def handle_delete_user_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the deletion of a user's video when 'Delete' button is pressed."""
     query = update.callback_query
@@ -1037,7 +1039,7 @@ async def handle_delete_user_video(update: Update, context: ContextTypes.DEFAULT
     match = re.match(r"delete_user_video_(\d+)", data)
     if match:
         user_video_id = int(match.group(1))
-        user_id = context.user_data.get('user_id')
+        user_id = get_user_id_from_context(context, update)
 
         if not user_id:
             await send_message(update, get_translation(context, 'bot_restarted'))
@@ -1085,9 +1087,6 @@ async def handle_delete_user_video(update: Update, context: ContextTypes.DEFAULT
         logger.error(f"Invalid callback data: {data}")
         return USER_VIEW_VIDEOS
 
-
-
-
 # Display the translator menu options
 async def show_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Display the translator menu options."""
@@ -1124,7 +1123,6 @@ async def show_user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
     )
     return USER_MENU
-
 
 # Handle translator menu selections
 async def handle_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1167,7 +1165,6 @@ async def handle_translator_menu(update: Update, context: ContextTypes.DEFAULT_T
 
     return TRANSLATOR_MENU
 
-
 async def handle_user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle user menu selections."""
     menu_translations = add_user_menu_translations()
@@ -1200,7 +1197,7 @@ async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TY
     """Handle the 'Edit Sentences' option for the translator with paging."""
     menu_translations = add_translator_menu_translations()
     language = context.user_data.get('language', 'English')
-    user_id = context.user_data.get('user_id')
+    user_id = get_user_id_from_context(context, update)
 
     if not user_id:
         await send_message(update, get_translation(context, 'bot_restarted'))
@@ -1234,8 +1231,6 @@ async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TY
     await display_current_sentence_video(update, context)
 
     return EDIT_SENTENCES
-
-
 
 async def display_current_sentence_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     menu_translations = add_translator_menu_translations()
@@ -1323,7 +1318,6 @@ async def display_current_sentence_video(update: Update, context: ContextTypes.D
             await send_message(update, "Video file not found.")
             return
 
-    
 # Handle deletion of sentences
 async def handle_delete_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -1332,7 +1326,7 @@ async def handle_delete_sentence(update: Update, context: ContextTypes.DEFAULT_T
     match = re.match(r"delete_(\d+)", data)
     if match:
         sentence_id = int(match.group(1))
-        user_id = context.user_data.get('user_id')
+        user_id = get_user_id_from_context(context, update)
 
         if not user_id:
             await send_message(update, get_translation(context, 'bot_restarted'))
@@ -1369,7 +1363,7 @@ async def handle_delete_sentence(update: Update, context: ContextTypes.DEFAULT_T
             language = context.user_data.get('language', 'English')
             await query.message.reply_text(
                 add_translator_menu_translations()['no_sentences_found'][language],
-                reply_markup=ReplyKeyboardMarkup(translator_menu_keyboard, one_time_keyboard=False)
+                reply_markup=ReplyKeyboardMarkup([[add_translator_menu_translations()['go_back'][language]]], one_time_keyboard=False)
             )
             return await show_translator_menu(update, context)
 
@@ -1379,8 +1373,7 @@ async def handle_delete_sentence(update: Update, context: ContextTypes.DEFAULT_T
     else:
         logger.error(f"Invalid callback data: {data}")
         return EDIT_SENTENCES
-    
-    
+
 async def handle_next_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -1471,7 +1464,7 @@ async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await cancel(update, context)
 
     if update.message.video:
-        user_id = context.user_data.get('user_id')
+        user_id = get_user_id_from_context(context, update)
         username = context.user_data.get('username')
 
         if not user_id:
@@ -1507,7 +1500,7 @@ async def user_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return await start(update, context)
 
     if update.message.video:
-        user_id = context.user_data.get('user_id')
+        user_id = get_user_id_from_context(context, update)
         username = context.user_data.get('username')
         user_language = context.user_data.get('language', 'English')
         # Get the translator video ID that the user is responding to
@@ -1522,7 +1515,7 @@ async def user_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         file_path = get_next_available_filename(USER_DIR, username, "user")
         await download_video(update.message.video, file_path, context)
-        
+
         # Save the response video with reference to the translator video and sentence_id
         save_video_info(
             user_id=user_id,
@@ -1555,29 +1548,6 @@ async def user_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(get_translation(context, 'valid_video_error'))
         return USER_REQUEST
 
-def save_video_info_with_reference(user_id, file_path, language, reference_video_id=None):
-    """
-    Saves video information to the database with optional reference to translator video.
-    """
-    connection = connect_to_db()
-    full_file_path = os.path.abspath(file_path)
-    full_file_path = full_file_path.replace('\\', '/')
-    if not connection:
-        return
-    try:
-        cursor = connection.cursor()
-        cursor.execute("""
-            INSERT INTO public.videos 
-            (user_id, file_path, language, video_reference_id, uploaded_at)
-            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-        """, (user_id, full_file_path, language, reference_video_id))
-        connection.commit()
-        cursor.close()
-        connection.close()
-        logger.info(f"Video information saved for user {user_id} with reference to video {reference_video_id}")
-    except Exception as error:
-        logger.error(f"Error saving video information to database: {error}")
-
 # Cancel operation
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle cancellation of the conversation."""
@@ -1596,11 +1566,17 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 # Fallback handler for messages outside of conversation
 async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle messages when no conversation is active."""
-    # Attempt to get the user's language from the database
-    user_id = context.user_data.get('user_id')
-    if user_id:
-        user_language = get_user_language(user_id) or 'English'
+    # Get the user's username
+    user = update.effective_user
+    username = user.username or "unknown_user"
+    context.user_data['username'] = username
+
+    # Attempt to get the user's language and user_id from the database
+    db_user_id, user_language, user_role = check_user_exists(username)
+    if db_user_id is not None:
+        context.user_data['user_id'] = db_user_id
         context.user_data['language'] = user_language
+        context.user_data['role'] = user_role
     else:
         context.user_data['language'] = 'English'
 
@@ -1646,16 +1622,14 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, user_videos_navigation)
             ],
             EDIT_SENTENCES: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, edit_sentences_navigation),
-            CallbackQueryHandler(handle_delete_sentence, pattern=r"^delete_\d+$"),
-            CallbackQueryHandler(handle_next_sentence, pattern="^next_sentence$"),
-            CallbackQueryHandler(handle_previous_sentence, pattern="^previous_sentence$"),
-        ],
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_sentences_navigation),
+                CallbackQueryHandler(handle_delete_sentence, pattern=r"^delete_\d+$"),
+                CallbackQueryHandler(handle_next_sentence, pattern="^next_sentence$"),
+                CallbackQueryHandler(handle_previous_sentence, pattern="^previous_sentence$"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-
-
 
     application.add_handler(conv_handler)
 
