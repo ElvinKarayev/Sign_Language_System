@@ -564,7 +564,8 @@ translations = {
         'restart_message': "Please press the /start button to begin.",
         'language_updated': "Your language has been updated.",
         'bot_restarted': "It seems the bot was restarted or you're not in an active conversation.",
-        'start_button': "/start"
+        'start_button': "/start",
+        'go_back': "Go back"
     },
     'German': {
         'consent_message': "Sehr geehrter Mitwirkender, Vielen Dank für die Unterstützung, die Sie uns gegeben haben! Die von Ihnen gesendeten Videos werden genutzt, um die Gebärdensprache zu fördern, zu verbreiten und zu lehren. Wenn Sie der Nutzung dieser Videos zu Forschungszwecken zustimmen…",
@@ -587,7 +588,8 @@ translations = {
         'restart_message': "Bitte drücken Sie die /start-Taste, um zu beginnen.",
         'language_updated': "Ihre Sprache wurde aktualisiert.",
         'bot_restarted': "Es scheint, dass der Bot neu gestartet wurde oder Sie sich nicht in einer aktiven Unterhaltung befinden.",
-        'start_button': "/start"
+        'start_button': "/start",
+        'go_back': "Zurück"
     },
     'Azerbaijani': {
         'consent_message': "Hörmətli şəxs, bizə göstərdiyiniz kömək üçün çox sağolun! Göndərdiyiniz videolar işarə dilinin yayılması, təşviqi və öyrənilməsi məqsədilə istifadə olunur. Əgər göndərdiyiniz videoların elmi-tədqiqat məqsədilə istifadə edilməsini təstiq edirsinizsə...",
@@ -610,7 +612,9 @@ translations = {
         'restart_message': "Başlamaq üçün /start düyməsini basın.",
         'language_updated': "Diliniz yeniləndi.",
         'bot_restarted': "Görünür, bot yenidən başladılıb və ya aktiv söhbətdə deyilsiniz.",
-        'start_button': "/start"
+        'start_button': "/start",
+        'go_back': "Geri dön"
+
     }
 }
 
@@ -832,6 +836,7 @@ async def handle_user_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def handle_view_user_videos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the 'View Your Videos' option for the user with paging."""
     user_id = get_user_id_from_context(context, update)
+    
     if not user_id:
         await send_message(update, get_translation(context, 'bot_restarted'))
         return ConversationHandler.END
@@ -851,13 +856,14 @@ async def handle_view_user_videos(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.pop('message_ids', None)
 
     # Send the 'Go back' message and keyboard
-    reply_keyboard = ReplyKeyboardMarkup([[get_translation(context, 'start_button')]], one_time_keyboard=False)
+    reply_keyboard = ReplyKeyboardMarkup([[get_translation(context, 'go_back')]], one_time_keyboard=False)
 
     await send_message(
         update,
         "You can go back to the menu by selecting an option below.",
         reply_markup=reply_keyboard
     )
+
 
     # Call function to display the current user video group
     await display_current_user_video_group(update, context)
@@ -1184,7 +1190,7 @@ async def handle_user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def user_videos_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle navigation within the 'View Your Videos' menu."""
     user_input = update.message.text if update.message else None
-    if user_input == get_translation(context, 'start_button'):
+    if user_input == get_translation(context, 'go_back'):
         # Go back to user menu
         return await show_user_menu(update, context)
     else:
@@ -1498,7 +1504,11 @@ async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def user_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text and update.message.text == '/start':
         return await start(update, context)
-
+    elif update.message.text == get_translation(context, 'cancel_button'):
+            return await cancel(update, context)
+    else:
+            await update.message.reply_text(get_translation(context, 'valid_video_error'))
+            return USER_REQUEST
     if update.message.video:
         user_id = get_user_id_from_context(context, update)
         username = context.user_data.get('username')
@@ -1607,11 +1617,11 @@ def main() -> None:
             TRANSLATOR_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_translator_menu)],
             WRITE_SENTENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_write_sentence)],
             TRANSLATOR_UPLOAD: [
-                MessageHandler(filters.VIDEO | (filters.TEXT & ~filters.COMMAND), handle_video_upload),
+                MessageHandler(filters.ALL | (filters.TEXT & ~filters.COMMAND), handle_video_upload),
                 CommandHandler("start", start)
             ],
             USER_REQUEST: [
-                MessageHandler(filters.VIDEO | (filters.TEXT & ~filters.COMMAND), user_video_request),
+                MessageHandler(filters.ALL | (filters.TEXT & ~filters.COMMAND), user_video_request),
                 CommandHandler("start", start)
             ],
             USER_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_menu)],
