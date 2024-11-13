@@ -101,7 +101,7 @@ ALTER SEQUENCE public.users_user_id_seq OWNED BY public.users.user_id;
 CREATE TABLE public.videos (
     video_id integer NOT NULL,
     text_id integer,
-    video_reference_id character varying(100),
+    video_reference_id integer,
     user_id integer,
     positive_scores integer,
     negative_scores integer,
