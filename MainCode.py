@@ -8,7 +8,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from telegram.ext import CallbackContext
 from apscheduler.jobstores.base import JobLookupError
 # Replace with your actual bot token
-BOTOKEN = ""
+BOTOKEN = "7383040553:AAE8DlZSc0PKB-UbsY5eZRB6lQmBSpuxnJU"
 RESTART_JOB_KEY = 'restart_job'
 
 
@@ -41,13 +41,12 @@ def schedule_restarted_message(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data[RESTART_JOB_KEY] = job
 
 def cancel_restarted_message(context: ContextTypes.DEFAULT_TYPE):
-    if RESTART_JOB_KEY in context.user_data:
-        old_job = context.user_data[RESTART_JOB_KEY]
+    old_job = context.user_data.pop(RESTART_JOB_KEY, None)  # pop returns None if key not present
+    if old_job is not None:
         try:
             old_job.schedule_removal()
         except JobLookupError:
             pass
-        del context.user_data[RESTART_JOB_KEY]
         
 def with_fallback_timeout(handler_func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -95,7 +94,7 @@ def connect_to_db():
         connection = psycopg2.connect(
             dbname="sdp_project",
             user="postgres",
-            password="",  # Replace with your actual password
+            password="sdp_project",  # Replace with your actual password
             host="localhost",
             port="5432"
         )
@@ -121,16 +120,6 @@ def check_user_exists(telegram_id, telegram_username=None):
                 cursor.close()
                 connection.close()
                 return result[0], result[1], result[2], result[3]  # Return user_id, username, language, and role
-
-        # If not found by telegram_id, try by username
-        if telegram_username:
-            cursor.execute("SELECT user_id, username, country, user_role FROM public.users WHERE username = %s", (telegram_username,))
-            result = cursor.fetchone()
-            cursor.close()
-            connection.close()
-            if result:
-                return result[0], result[1], result[2], result[3]  # Return user_id, username, language, and role
-
         cursor.close()
         connection.close()
         return None, None, None, None
@@ -165,7 +154,7 @@ def add_new_user(username, language, role, telegram_id):
         connection.close()
         logger.error(f"IntegrityError: {error}")
         # Fetch the existing user
-        existing_user_id, _, _, _ = check_user_exists(None, username)
+        existing_user_id, _, _, _ = check_user_exists(telegram_id)
         if existing_user_id:
             # Update telegram_id if missing
             if telegram_id and not get_user_telegram_id(existing_user_id):
@@ -708,6 +697,9 @@ async def send_message(update: Update, text: str, reply_markup=None):
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.setdefault(RESTART_JOB_KEY, None)
+    cancel_restarted_message(context)
+    context.user_data.clear()
     """Start the bot by checking if the user exists and proceed accordingly."""
     user = update.effective_user
     telegram_id = user.id
@@ -715,7 +707,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     context.user_data['telegram_id'] = telegram_id
     context.user_data['telegram_username'] = telegram_username
-    cancel_restarted_message(context)
     # Check if user exists in the database using telegram_id or username
     db_user_id, username, user_language_db, user_role = check_user_exists(telegram_id, telegram_username)
     
