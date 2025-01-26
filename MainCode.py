@@ -1,3 +1,5 @@
+import random
+import asyncio
 import json
 import logging
 import os
@@ -10,8 +12,10 @@ from apscheduler.jobstores.base import JobLookupError
 # Replace with your actual bot token
 BOTOKEN = "7383040553:AAE8DlZSc0PKB-UbsY5eZRB6lQmBSpuxnJU"
 RESTART_JOB_KEY = 'restart_job'
-
-
+latest_otp = None
+async def generate_random_otp(context: ContextTypes.DEFAULT_TYPE):
+    global latest_otp
+    latest_otp = random.randint(100000, 999999)
 async def send_bot_restarted(context: CallbackContext):
     # This will be called after 20 seconds if not cancelled
     # It sends a "bot restarted" message to the user
@@ -688,6 +692,99 @@ def get_user_id_from_context(context, update):
     return None
 
 
+def create_pagination_keyboard(current_page, total_pages):
+    """Create an inline keyboard for pagination."""
+    keyboard = []
+    row = []
+    
+    # Add previous page button if not on first page
+    if current_page > 1:
+        row.append(InlineKeyboardButton("⬅️", callback_data=f"page_{current_page-1}"))
+    
+    # Add current page indicator
+    row.append(InlineKeyboardButton(f"{current_page}/{total_pages}", callback_data="current"))
+    
+    # Add next page button if not on last page
+    if current_page < total_pages:
+        row.append(InlineKeyboardButton("➡️", callback_data=f"page_{current_page+1}"))
+    
+    keyboard.append(row)
+    return InlineKeyboardMarkup(keyboard)
+
+
+@with_fallback_timeout
+async def display_sentences_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display a page of sentences with pagination."""
+    cancel_restarted_message(context)
+    
+    # Get page from context or default to 1
+    page = context.user_data.get('current_page', 1)
+    
+    language = context.user_data.get('language', 'English')
+    sentences = get_all_sentences(language)
+    
+    # Calculate pagination
+    items_per_page = 10
+    total_pages = (len(sentences) + items_per_page - 1) // items_per_page
+    start_idx = (page - 1) * items_per_page
+    end_idx = start_idx + items_per_page
+    
+    # Get sentences for current page
+    current_sentences = sentences[start_idx:end_idx]
+    
+    if not current_sentences:
+        message = get_translation(context, 'no_sentences_found')
+    else:
+        # Create numbered list of sentences
+        message = f"{get_translation(context, 'available_sentences')}\n\n"
+        for idx, sentence in enumerate(current_sentences, start=start_idx + 1):
+            message += f"{idx}. {sentence}\n"
+    
+    # Create pagination keyboard
+    keyboard = create_pagination_keyboard(page, total_pages)
+    
+    # Add Go Back button in reply keyboard
+    reply_keyboard = ReplyKeyboardMarkup(
+        [[get_translation(context, 'go_back')]],
+        resize_keyboard=True,
+        one_time_keyboard=False
+    )
+    
+    # Update or send message
+    if update.callback_query:
+        # Just update the text and pagination keyboard, don't send prompt again
+        await update.callback_query.message.edit_text(
+            text=message,
+            reply_markup=keyboard
+        )
+    else:
+        # Only for first time viewing sentences
+        await update.message.reply_text(
+            text=message,
+            reply_markup=keyboard
+        )
+        await update.message.reply_text(
+            get_translation(context, 'edit_menu_prompt'),
+            reply_markup=reply_keyboard
+        )
+
+
+@with_fallback_timeout
+async def handle_pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle pagination callback queries."""
+    query = update.callback_query
+    await query.answer()
+    
+    cancel_restarted_message(context)
+    
+    if query.data.startswith("page_"):
+        # Store the new page in context
+        page = int(query.data.split("_")[1])
+        context.user_data['current_page'] = page
+        await display_sentences_page(update, context)
+    return TRANSLATOR_MENU
+
+
 
 async def send_message(update: Update, text: str, reply_markup=None):
     if update.message:
@@ -859,7 +956,36 @@ async def ask_permission(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def role_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     cancel_restarted_message(context)
     user_role_text = update.message.text
+    global latest_otp
+    if 'awaiting_otp' in context.user_data:
+        entered_otp = user_role_text
 
+        if entered_otp == str(latest_otp):
+            # OTP is correct, proceed with translator registration
+            context.user_data['role'] = 'Translator'
+            await update.message.reply_text(get_translation(context, 'otp_verified'))
+
+            username = context.user_data.get('username')
+            language = context.user_data.get('language', 'English')
+            telegram_id = context.user_data['telegram_id']
+
+            db_user_id = add_new_user(username, language, "Translator", telegram_id)
+            if db_user_id is not None:
+                context.user_data['user_id'] = db_user_id
+                return await show_translator_menu(update, context)
+            else:
+                await update.message.reply_text(get_translation(context, 'technical_difficulty'))
+                return ConversationHandler.END
+        else:
+            # Incorrect OTP, ask to choose role again
+            await update.message.reply_text(get_translation(context, 'otp_failed'))
+            del context.user_data['awaiting_otp']  # Reset OTP request
+            reply_keyboard = [[get_translation(context, 'translator_button'), get_translation(context, 'user_button')], [get_translation(context, 'cancel_button')]]
+            await update.message.reply_text(
+                get_translation(context, 'choose_role'),
+                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
+            )
+            return ROLE_SELECTION
     # Check if cancel is pressed
     if user_role_text == get_translation(context, 'cancel_button'):
         return await cancel(update, context)
@@ -870,10 +996,16 @@ async def role_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             get_translation(context, 'choose_role')
         )
         return ROLE_SELECTION
-
+    if user_role_text == get_translation(context, 'translator_button'):
+        await update.message.reply_text(
+            get_translation(context, 'otp_code_prompt')  # "Please enter the OTP code to become a Translator"
+        )
+        context.user_data['awaiting_otp'] = True  # Set OTP verification status
+        return ROLE_SELECTION
     # Map user_role_text to role_value
     role_value = 'Translator' if user_role_text == get_translation(context, 'translator_button') else 'User'
     context.user_data['role'] = role_value  # Store role in user_data
+    
 
     username = context.user_data.get('username')
     language = context.user_data.get('language', 'English')
@@ -1216,6 +1348,7 @@ async def show_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_keyboard = [
         [get_translation(context, 'view_sentences'), get_translation(context, 'write_sentence')],
         [get_translation(context, 'edit_sentences'), get_translation(context, 'vote')],
+        [get_translation(context, 'generate_otp')],
         [get_translation(context, 'cancel_button')]
     ]
 
@@ -1253,12 +1386,13 @@ async def handle_translator_menu(update: Update, context: ContextTypes.DEFAULT_T
     user_choice = update.message.text
 
     if user_choice == get_translation(context, 'view_sentences'):
-        sentences = get_all_sentences(context.user_data.get('language'))
-        if sentences:
-            message = f"{get_translation(context, 'available_sentences')}\n\n" + "\n".join(f"- {sentence}" for sentence in sentences)
-        else:
-            message = get_translation(context, 'no_sentences_found')
-        await update.message.reply_text(message)
+        # Set initial page in context
+        context.user_data['current_page'] = 1
+        await display_sentences_page(update, context)
+        return TRANSLATOR_MENU
+
+    elif user_choice == get_translation(context, 'go_back'):
+    # Return to translator menu
         return await show_translator_menu(update, context)
 
     elif user_choice == get_translation(context, 'write_sentence'):
@@ -1276,14 +1410,16 @@ async def handle_translator_menu(update: Update, context: ContextTypes.DEFAULT_T
     elif user_choice == get_translation(context, 'vote'):
         return await start_voting(update, context)
 
-    elif user_choice == get_translation(context, 'change_language'):
-        context.user_data['change_language'] = True
-        reply_keyboard = [["🇬🇧 English", "🇩🇪 German", "🇦🇿 Azerbaijani"]]
-        await update.message.reply_text(
-            get_translation(context, 'select_new_language'),
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard,resize_keyboard=True, one_time_keyboard=True)
-        )
-        return LANGUAGE_SELECTION
+    #elif user_choice == get_translation(context, 'change_language'):
+    #    context.user_data['change_language'] = True
+    #    reply_keyboard = [["🇬🇧 English", "🇩🇪 German", "🇦🇿 Azerbaijani"]]
+    #    await update.message.reply_text(
+    #        get_translation(context, 'select_new_language'),
+    #        reply_markup=ReplyKeyboardMarkup(reply_keyboard,resize_keyboard=True, one_time_keyboard=True)
+    #    )
+    #    return LANGUAGE_SELECTION
+    elif user_choice == get_translation(context, 'generate_otp'):
+        return await handle_view_otp(update, context)
 
     elif user_choice == get_translation(context, 'cancel_button'):
         return await cancel(update, context)
@@ -1292,6 +1428,21 @@ async def handle_translator_menu(update: Update, context: ContextTypes.DEFAULT_T
         # Unrecognized input, prompt again
         await update.message.reply_text(get_translation(context, 'invalid_option'))
         return TRANSLATOR_MENU
+async def handle_view_otp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    cancel_restarted_message(context)
+    """Retrieve and display the latest OTP."""
+
+    global latest_otp
+
+    otp_message = f"{latest_otp}"
+
+    await send_message(
+        update,
+        otp_message,
+        reply_markup=ReplyKeyboardMarkup([[get_translation(context, 'go_back')]], resize_keyboard=True, one_time_keyboard=True)
+    )
+
+    return TRANSLATOR_MENU
 
 async def start_voting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     cancel_restarted_message(context)
@@ -1949,6 +2100,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 def main() -> None:
     """Start the bot."""
     application = Application.builder().token(BOTOKEN).build()
+    job_queue = application.job_queue
+    job_queue.run_repeating(generate_random_otp, interval=300, first=1)
     # Set up conversation handler with states
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -1957,7 +2110,10 @@ def main() -> None:
             USERNAME_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, with_fallback_timeout(handle_username_input))],
             ASK_PERMISSION: [MessageHandler(filters.TEXT & ~filters.COMMAND, with_fallback_timeout(ask_permission))],
             ROLE_SELECTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, with_fallback_timeout(role_selection))],
-            TRANSLATOR_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, with_fallback_timeout(handle_translator_menu))],
+            TRANSLATOR_MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, with_fallback_timeout(handle_translator_menu)),
+                CallbackQueryHandler(with_fallback_timeout(handle_pagination_callback), pattern=r"^page_\d+$"),
+            ],
             WRITE_SENTENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, with_fallback_timeout(handle_write_sentence))],
             TRANSLATOR_UPLOAD: [
                 MessageHandler(filters.ALL | (filters.TEXT & ~filters.COMMAND), with_fallback_timeout(handle_video_upload)),
@@ -1997,6 +2153,7 @@ def main() -> None:
         logger.info("Database connection tested successfully.")
     else:
         logger.error("Failed to connect to the database. Please check your database settings.")
+    
 
     # Start the Bot
     application.run_polling()
