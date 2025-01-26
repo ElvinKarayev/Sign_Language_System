@@ -58,8 +58,12 @@
   "voting_error": "⚠️ Während der Abstimmung ist ein Fehler aufgetreten. Rückkehr zum Menü.",
   "voting_instruction": "Bitte stimmen Sie mit den untenstehenden Schaltflächen ab oder drücken Sie 'Zurück', um zum Menü zurückzukehren.",
   "returning_to_menu": "↩️ Rückkehr zum Menü.",
-  "skip_button": "skip",
+  "skip_button": "⏭️ Video überspringen",
   "username_prompt": "Es scheint, dass Sie keinen Telegram-Benutzernamen haben.\nBitte geben Sie einen eindeutigen Benutzernamen für diesen Bot ein (nur englische Buchstaben):",
   "invalid_username": "Benutzernamen dürfen nur Buchstaben, Zahlen und Unterstriche enthalten und müssen zwischen 5 und 32 Zeichen lang sein.\nBitte geben Sie einen gültigen Benutzernamen mit englischen Buchstaben ein:",
-  "username_taken": "Dieser Benutzername ist bereits vergeben. Bitte wählen Sie einen anderen Benutzernamen:"
+  "username_taken": "Dieser Benutzername ist bereits vergeben. Bitte wählen Sie einen anderen Benutzernamen:",
+  "generate_otp": "Password for Translator",
+  "otp_code_prompt": "Please enter the OTP code to become a Translator",
+  "otp_verified": "✅ OTP verified successfully! You are now registered as a Translator.",
+  "otp_failed": "❌ Incorrect OTP. Please try again or select a different role."
 }

@@ -58,8 +58,12 @@
   "voting_error": "⚠️ Səsvermə zamanı səhv baş verdi. Menyuyə qayıdıram.",
   "voting_instruction": "Zəhmət olmasa aşağıdakı düymələri istifadə edərək səs verin və ya 'Geri dön' düyməsini basaraq menyuya qayıdın.",
   "returning_to_menu": "↩️ Menyuyə qayıdıram.",
-  "skip_button": "skip",
+  "skip_button": "⏭️ Videonu keçin",
   "username_prompt": "Görünür, sizin Telegram istifadəçi adınız yoxdur.\nZəhmət olmasa, bu bot üçün unikal bir istifadəçi adı daxil edin (yalnız İngilis hərfləri):",
   "invalid_username": "İstifadəçi adları yalnız hərflər, rəqəmlər və alt xəttlərdən ibarət olmalı və 5 ilə 32 simvol arasında olmalıdır.\nZəhmət olmasa İngilis hərflərindən istifadə edərək etibarlı bir istifadəçi adı daxil edin:",
-  "username_taken": "Bu istifadəçi adı artıq istifadə olunur. Zəhmət olmasa başqa bir istifadəçi adı daxil edin:"
+  "username_taken": "Bu istifadəçi adı artıq istifadə olunur. Zəhmət olmasa başqa bir istifadəçi adı daxil edin:",
+  "generate_otp": "Translator üçün KOD",
+  "otp_code_prompt": "Please enter the OTP code to become a Translator",
+  "otp_verified": "✅ OTP verified successfully! You are now registered as a Translator.",
+  "otp_failed": "❌ Incorrect OTP. Please try again or select a different role."
 }
