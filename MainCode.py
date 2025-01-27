@@ -320,6 +320,7 @@ def get_random_translator_video(user_language, context=None, exclude_ids=None):
             LEFT JOIN sentences s ON v.text_id = s.sentence_id
             WHERE v.language = %s
               AND v.user_id != %s
+              AND v.video_reference_id IS NULL
               AND v.video_id NOT IN (
                   SELECT video_reference_id FROM videos WHERE user_id = %s
               )
@@ -778,10 +779,15 @@ async def handle_pagination_callback(update: Update, context: ContextTypes.DEFAU
     cancel_restarted_message(context)
     
     if query.data.startswith("page_"):
-        # Store the new page in context
-        page = int(query.data.split("_")[1])
-        context.user_data['current_page'] = page
-        await display_sentences_page(update, context)
+        try:
+            # Store the new page in context
+            page = int(query.data.split("_")[1])
+            context.user_data['current_page'] = page
+            await display_sentences_page(update, context)
+        except Exception as e:
+            logger.error(f"Error handling pagination: {e}")
+            await send_message(update, get_translation(context, 'technical_difficulty'))
+    
     return TRANSLATOR_MENU
 
 
@@ -1445,74 +1451,108 @@ async def handle_view_otp(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return TRANSLATOR_MENU
 
 async def start_voting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    cancel_restarted_message(context)
     """Start the voting loop for the translator."""
-    user_id = get_user_id_from_context(context, update)
-    if not user_id:
-        await send_message(update, get_translation(context, 'bot_restarted'))
-        return ConversationHandler.END
-
-    # Create the reply keyboard with the "Go Back" button
-    reply_keyboard = ReplyKeyboardMarkup(
-        [[get_translation(context, 'go_back')]],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
-
-    # Send a minimal message to set the reply keyboard
-    await send_message(
-        update,
-        get_translation(context, 'voting_started'),
-        reply_markup=reply_keyboard
-    )
-
-    # Proceed to send the first video
-    return await send_next_video_for_voting(update, context)
-
-
-
-async def send_next_video_for_voting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     cancel_restarted_message(context)
-    """Send the next video for the translator to vote on."""
-    user_id = get_user_id_from_context(context, update)
-    if not user_id:
-        await send_message(update, get_translation(context, 'bot_restarted'))
-        return ConversationHandler.END
+    try:
+        user_id = get_user_id_from_context(context, update)
+        if not user_id:
+            await send_message(update, get_translation(context, 'bot_restarted'))
+            return ConversationHandler.END
 
-    user_language = context.user_data.get('language', 'English')
+        # Create the reply keyboard with the "Go Back" button
+        reply_keyboard = ReplyKeyboardMarkup(
+            [[get_translation(context, 'go_back')]],
+            resize_keyboard=True,
+            one_time_keyboard=False
+        )
 
-    video_info = get_random_video_for_voting(user_id, user_language)
-    if video_info:
-        video_id, file_path, sentence_content = video_info
-        context.user_data['current_voting_video_id'] = video_id
+        # First send the keyboard message
+        try:
+            await send_message(
+                update,
+                get_translation(context, 'voting_started'),
+                reply_markup=reply_keyboard
+            )
+        except telegram.error.NetworkError as e:
+            logger.error(f"Network error when sending initial message: {e}")
+            # Try one more time
+            await asyncio.sleep(1)
+            await send_message(
+                update,
+                get_translation(context, 'voting_started'),
+                reply_markup=reply_keyboard
+            )
 
-        # Inline keyboard with "Up Vote" and "Down Vote"
-        buttons = [
-            [
-                InlineKeyboardButton(text=get_translation(context, 'up_vote'), callback_data='vote_up'),
-                InlineKeyboardButton(text=get_translation(context, 'down_vote'), callback_data='vote_down')
-            ]
-        ]
-        keyboard = InlineKeyboardMarkup(buttons)
-
-        if os.path.exists(file_path):
-            with open(file_path, 'rb') as video_file:
-                sent_message = await update.effective_message.reply_video(
-                    video_file,
-                    caption=get_translation(context, 'voting_sentence').format(sentence_content),
-                    reply_markup=keyboard
-                )
-                # Store the message ID to delete later if needed
-                context.user_data['current_voting_message_id'] = sent_message.message_id
-        else:
-            await send_message(update, get_translation(context, 'video_not_found'))
-
-        return VOTING
-    else:
-        await send_message(update, get_translation(context, 'no_more_videos_to_vote'))
+        # Then proceed to send the first video
+        return await send_next_video_for_voting(update, context)
+    except Exception as e:
+        logger.error(f"Error in start_voting: {e}")
+        await send_message(update, get_translation(context, 'technical_difficulty'))
         return await show_translator_menu(update, context)
 
+async def send_next_video_for_voting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Send the next video for the translator to vote on."""
+    cancel_restarted_message(context)
+    try:
+        user_id = get_user_id_from_context(context, update)
+        if not user_id:
+            await send_message(update, get_translation(context, 'bot_restarted'))
+            return ConversationHandler.END
 
+        user_language = context.user_data.get('language', 'English')
+        
+        # Add retries for getting video
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                video_info = get_random_video_for_voting(user_id, user_language)
+                if video_info:
+                    video_id, file_path, sentence_content = video_info
+                    if not os.path.exists(file_path):
+                        logger.error(f"Video file not found: {file_path}")
+                        continue
+
+                    context.user_data['current_voting_video_id'] = video_id
+
+                    buttons = [
+                        [
+                            InlineKeyboardButton(text=get_translation(context, 'up_vote'), callback_data='vote_up'),
+                            InlineKeyboardButton(text=get_translation(context, 'down_vote'), callback_data='vote_down')
+                        ]
+                    ]
+                    keyboard = InlineKeyboardMarkup(buttons)
+
+                    with open(file_path, 'rb') as video_file:
+                        try:
+                            sent_message = await update.effective_message.reply_video(
+                                video_file,
+                                caption=get_translation(context, 'voting_sentence').format(sentence_content),
+                                reply_markup=keyboard
+                            )
+                            context.user_data['current_voting_message_id'] = sent_message.message_id
+                            return VOTING
+                        except telegram.error.NetworkError as e:
+                            logger.error(f"Network error when sending video (attempt {attempt + 1}): {e}")
+                            if attempt == max_retries - 1:
+                                raise
+                            await asyncio.sleep(1)  # Wait before retry
+                            continue
+                else:
+                    await send_message(update, get_translation(context, 'no_more_videos_to_vote'))
+                    return await show_translator_menu(update, context)
+            except Exception as e:
+                logger.error(f"Error in attempt {attempt + 1}: {e}")
+                if attempt == max_retries - 1:
+                    raise
+
+        # If we get here, all retries failed
+        await send_message(update, get_translation(context, 'technical_difficulty'))
+        return await show_translator_menu(update, context)
+
+    except Exception as e:
+        logger.error(f"Error in send_next_video_for_voting: {e}")
+        await send_message(update, get_translation(context, 'technical_difficulty'))
+        return await show_translator_menu(update, context)
 
 
 
@@ -1706,43 +1746,413 @@ async def user_videos_navigation(update: Update, context: ContextTypes.DEFAULT_T
 
 # Handle editing sentences
 async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    cancel_restarted_message(context)
     """Handle the 'Edit Sentences' option for the translator with paging."""
+    cancel_restarted_message(context)
     user_id = get_user_id_from_context(context, update)
-
+    
     if not user_id:
         await send_message(update, get_translation(context, 'bot_restarted'))
         return ConversationHandler.END
 
     language = context.user_data.get('language', 'English')
 
-    # Fetch sentences and associated videos for this translator and language
-    sentences_videos = get_sentences_and_videos(user_id, language)
-
-    if not sentences_videos:
-        await send_message(update, get_translation(context, 'no_sentences_found'))
+    connection = connect_to_db()
+    if not connection:
         return await show_translator_menu(update, context)
 
-    # Store sentences_videos and current index in user_data
-    context.user_data['sentences_videos'] = sentences_videos
-    context.user_data['current_index'] = 0
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            SELECT 
+                s.sentence_id,
+                s.sentence_content,
+                v.file_path,
+                COALESCE(v.positive_scores, 0) as upvotes,
+                COALESCE(v.negative_scores, 0) as downvotes
+            FROM sentences s
+            LEFT JOIN videos v ON s.sentence_id = v.text_id
+            WHERE s.user_id = %s AND s.sentence_language = %s
+            ORDER BY s.sentence_id DESC
+        """, (user_id, language))
+        
+        results = cursor.fetchall()
+        cursor.close()
+        connection.close()
 
-    # Reset 'message_id' to ensure a new message is sent
-    context.user_data.pop('message_id', None)
+        if not results:
+            await send_message(update, get_translation(context, 'no_sentences_found'))
+            return await show_translator_menu(update, context)
 
-    # Send the 'Go back' message and keyboard
-    translator_menu_keyboard = [[get_translation(context, 'go_back')]]
-    reply_keyboard = ReplyKeyboardMarkup(translator_menu_keyboard, resize_keyboard=True, one_time_keyboard=False)
+        # Store the results in context
+        context.user_data['sentences'] = [
+            {
+                'id': row[0],
+                'sentence': row[1],
+                'video_path': row[2],
+                'upvotes': row[3],
+                'downvotes': row[4]
+            }
+            for row in results
+        ]
+        
+        # Reset pagination state
+        context.user_data['current_page'] = 1
+        context.user_data['items_per_page'] = 5
 
-    await send_message(
-        update,
-        get_translation(context, 'edit_menu_prompt'),
-        reply_markup=reply_keyboard
+        # Display the first page
+        await display_edit_sentences_page(update, context)
+        return EDIT_SENTENCES
+
+    except Exception as error:
+        logger.error(f"Error in handle_edit_sentences: {error}")
+        await send_message(update, get_translation(context, 'technical_difficulty'))
+        return await show_translator_menu(update, context)
+
+async def display_edit_sentences_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display a page of sentences with voting information."""
+    sentences = context.user_data.get('sentences', [])
+    current_page = context.user_data.get('current_page', 1)
+    items_per_page = context.user_data.get('items_per_page', 5)
+    
+    total_items = len(sentences)
+    start_idx = (current_page - 1) * items_per_page
+    end_idx = start_idx + items_per_page
+    current_items = sentences[start_idx:end_idx]
+    total_pages = (total_items + items_per_page - 1) // items_per_page
+
+    message_lines = [f"Cəmi Cümlələr: {total_items}\n"]
+    
+    for idx, item in enumerate(current_items, start=start_idx + 1):
+        message_lines.append(
+            f"{idx}. {item['sentence']}\n"
+            f"    👍: {item['upvotes']}    👎: {item['downvotes']}\n"
+        )
+    
+    message_text = "\n".join(message_lines)
+
+    # Create buttons
+    button_rows = []
+    
+    # Item selection buttons using absolute indices
+    item_buttons = [
+        InlineKeyboardButton(
+            text=str(i),
+            callback_data=f"view_item_{i-1}"
+        ) for i in range(start_idx + 1, start_idx + len(current_items) + 1)
+    ]
+    if item_buttons:
+        button_rows.append(item_buttons)
+    
+    # Navigation buttons in Azerbaijani
+    nav_buttons = []
+    if current_page > 1:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Əvvəlki", callback_data="prev_page"))
+    if current_page < total_pages:
+        nav_buttons.append(InlineKeyboardButton("Növbəti ➡️", callback_data="next_page"))
+    if nav_buttons:
+        button_rows.append(nav_buttons)
+    
+    keyboard = InlineKeyboardMarkup(button_rows)
+
+    # Send or update message
+    if update.callback_query:
+        try:
+            await update.callback_query.message.edit_text(
+                text=message_text,
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            logger.error(f"Error updating message: {e}")
+            await update.callback_query.message.reply_text(
+                text=message_text,
+                reply_markup=keyboard
+            )
+    else:
+        # First time display - also show the Go Back button
+        reply_keyboard = ReplyKeyboardMarkup(
+            [[get_translation(context, 'go_back')]],
+            resize_keyboard=True
+        )
+        
+        await send_message(
+            update,
+            message_text,
+            reply_markup=keyboard
+        )
+        await send_message(
+            update,
+            get_translation(context, 'edit_menu_prompt'),
+            reply_markup=reply_keyboard
+        )
+
+async def handle_page_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle prev/next page navigation."""
+    query = update.callback_query
+    await query.answer()
+    
+    current_page = context.user_data.get('current_page', 1)
+    
+    if query.data == "prev_page":
+        context.user_data['current_page'] = max(1, current_page - 1)
+    elif query.data == "next_page":
+        total_items = len(context.user_data.get('sentences', []))
+        items_per_page = context.user_data.get('items_per_page', 5)
+        total_pages = (total_items + items_per_page - 1) // items_per_page
+        context.user_data['current_page'] = min(total_pages, current_page + 1)
+    
+    await display_edit_sentences_page(update, context)
+    return EDIT_SENTENCES
+
+async def show_sentence_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Show detail view for a selected sentence."""
+    query = update.callback_query
+    await query.answer()
+    
+    match = re.match(r"view_item_(\d+)", query.data)
+    if not match:
+        return EDIT_SENTENCES
+    
+    item_idx = int(match.group(1))
+    sentences = context.user_data.get('sentences', [])
+    
+    if item_idx >= len(sentences):
+        await query.message.reply_text("Item not found.")
+        return EDIT_SENTENCES
+    
+    item = sentences[item_idx]
+    
+    # Create keyboard for detail view
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🗑 Delete", callback_data=f"delete_{item['id']}"),
+            InlineKeyboardButton("⬅️ Back", callback_data="back_to_list")
+        ]
+    ])
+    
+    # Delete the list message
+    await query.message.delete()
+    
+    # Send video with just the sentence as caption
+    if item['video_path'] and os.path.exists(item['video_path']):
+        with open(item['video_path'], 'rb') as video_file:
+            sent_message = await context.bot.send_video(
+                chat_id=update.effective_chat.id,
+                video=video_file,
+                caption=item['sentence'],  # Just show the sentence
+                reply_markup=keyboard
+            )
+            context.user_data['detail_message_id'] = sent_message.message_id
+    else:
+        await query.message.reply_text(
+            "Video not found.",
+            reply_markup=keyboard
+        )
+    
+    return EDIT_SENTENCES
+
+
+async def fetch_sentences_with_votes(user_id: int, language: str) -> list:
+    """Fetch sentences with their vote counts."""
+    connection = connect_to_db()
+    if not connection:
+        return []
+        
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            SELECT 
+                s.sentence_id,
+                s.sentence_content,
+                v.file_path,
+                COALESCE(v.positive_scores, 0) as upvotes,
+                COALESCE(v.negative_scores, 0) as downvotes
+            FROM sentences s
+            LEFT JOIN videos v ON s.sentence_id = v.text_id
+            WHERE s.user_id = %s AND s.sentence_language = %s
+            ORDER BY s.sentence_id DESC
+        """, (user_id, language))
+        
+        results = cursor.fetchall()
+        cursor.close()
+        connection.close()
+        
+        return [
+            {
+                'id': row[0],
+                'sentence': row[1],
+                'video_path': row[2],
+                'upvotes': row[3],
+                'downvotes': row[4]
+            }
+            for row in results
+        ]
+    except Exception as error:
+        logger.error(f"Error fetching sentences with votes: {error}")
+        return []
+
+async def display_sentences_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display a page of sentences with pagination."""
+    cancel_restarted_message(context)
+    
+    # Get page from context or default to 1
+    page = context.user_data.get('current_page', 1)
+    
+    language = context.user_data.get('language', 'English')
+    sentences = get_all_sentences(language)
+    
+    # Calculate pagination
+    items_per_page = 10
+    total_pages = (len(sentences) + items_per_page - 1) // items_per_page
+    start_idx = (page - 1) * items_per_page
+    end_idx = start_idx + items_per_page
+    
+    # Get sentences for current page
+    current_sentences = sentences[start_idx:end_idx]
+    
+    if not current_sentences:
+        message = get_translation(context, 'no_sentences_found')
+    else:
+        # Create numbered list of sentences
+        message = f"{get_translation(context, 'available_sentences')}\n\n"
+        for idx, sentence in enumerate(current_sentences, start=start_idx + 1):
+            message += f"{idx}. {sentence}\n"
+    
+    # Create pagination keyboard
+    keyboard = []
+    row = []
+    
+    # Add previous page button if not on first page
+    if page > 1:
+        row.append(InlineKeyboardButton("⬅️", callback_data=f"page_{page-1}"))
+    
+    # Add current page indicator
+    row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="current"))
+    
+    # Add next page button if not on last page
+    if page < total_pages:
+        row.append(InlineKeyboardButton("➡️", callback_data=f"page_{page+1}"))
+    
+    keyboard.append(row)
+    markup = InlineKeyboardMarkup(keyboard)
+    
+    # Add Go Back button in reply keyboard
+    reply_keyboard = ReplyKeyboardMarkup(
+        [[get_translation(context, 'go_back')]],
+        resize_keyboard=True,
+        one_time_keyboard=False
     )
+    
+    # Update or send message
+    if update.callback_query:
+        # Just update the text and pagination keyboard, don't send prompt again
+        try:
+            await update.callback_query.message.edit_text(
+                text=message,
+                reply_markup=markup
+            )
+        except Exception as e:
+            logger.error(f"Error updating message: {e}")
+    else:
+        # Only for first time viewing sentences
+        try:
+            await update.message.reply_text(
+                text=message,
+                reply_markup=markup
+            )
+            await update.message.reply_text(
+                get_translation(context, 'edit_menu_prompt'),
+                reply_markup=reply_keyboard
+            )
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+            await send_message(update, get_translation(context, 'technical_difficulty'))
+            return await show_translator_menu(update, context)
 
-    # Call function to display the current sentence-video pair
-    await display_current_sentence_video(update, context)
 
+
+async def show_item_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Show detail view for a selected item."""
+    query = update.callback_query
+    await query.answer()
+    
+    match = re.match(r"view_item_(\d+)", query.data)
+    if not match:
+        return EDIT_SENTENCES
+        
+    item_idx = int(match.group(1))
+    sentences = context.user_data.get('sentences', [])
+    
+    if item_idx >= len(sentences):
+        await query.message.reply_text("Item not found.")
+        return EDIT_SENTENCES
+        
+    item = sentences[item_idx]
+    
+    # Create keyboard for detail view
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Delete", callback_data=f"delete_{item['id']}"),
+            InlineKeyboardButton("Go Back", callback_data="back_to_list")
+        ]
+    ])
+    
+    # Delete the list message
+    await query.message.delete()
+    
+    # Send video with caption
+    if item['video_path'] and os.path.exists(item['video_path']):
+        with open(item['video_path'], 'rb') as video_file:
+            sent_message = await context.bot.send_video(
+                chat_id=update.effective_chat.id,
+                video=video_file,
+                caption=f"Sentence: {item['sentence']}\nUp votes: {item['upvotes']} Down votes: {item['downvotes']}",
+                reply_markup=keyboard
+            )
+            context.user_data['detail_message_id'] = sent_message.message_id
+    else:
+        await query.message.reply_text(
+            "Video not found.",
+            reply_markup=keyboard
+        )
+    
+    return EDIT_SENTENCES
+
+async def handle_back_to_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle returning to the list view from detail view."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Delete the detail view message
+    if 'detail_message_id' in context.user_data:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id,
+                message_id=context.user_data['detail_message_id']
+            )
+            del context.user_data['detail_message_id']
+        except Exception as e:
+            logger.error(f"Error deleting detail message: {e}")
+    
+    # Display the current page again
+    await display_edit_sentences_page(update, context)
+    return EDIT_SENTENCES
+
+async def handle_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle pagination navigation."""
+    query = update.callback_query
+    await query.answer()
+    
+    current_page = context.user_data.get('current_page', 1)
+    
+    if query.data == "prev_page":
+        context.user_data['current_page'] = max(1, current_page - 1)
+    elif query.data == "next_page":
+        total_items = len(context.user_data.get('sentences', []))
+        items_per_page = context.user_data.get('items_per_page', 5)
+        total_pages = (total_items + items_per_page - 1) // items_per_page
+        context.user_data['current_page'] = min(total_pages, current_page + 1)
+    
+    await display_sentences_page(update, context)
     return EDIT_SENTENCES
 
 async def display_current_sentence_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1832,9 +2242,11 @@ async def display_current_sentence_video(update: Update, context: ContextTypes.D
 
 # Handle deletion of sentences
 async def handle_delete_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle deletion of a sentence and refresh the view."""
     cancel_restarted_message(context)
     query = update.callback_query
     await query.answer()
+    
     data = query.data
     match = re.match(r"delete_(\d+)", data)
     if match:
@@ -1848,43 +2260,79 @@ async def handle_delete_sentence(update: Update, context: ContextTypes.DEFAULT_T
         # Delete the sentence and associated video
         delete_sentence_and_video(sentence_id, user_id)
 
-        # Remove the sentence from the list and adjust current_index
-        sentences_videos = context.user_data.get('sentences_videos', [])
-        current_index = context.user_data.get('current_index', 0)
-        for i, (s_id, _, _) in enumerate(sentences_videos):
-            if s_id == sentence_id:
-                del sentences_videos[i]
-                if current_index >= len(sentences_videos):
-                    current_index = len(sentences_videos) - 1
-                context.user_data['current_index'] = current_index
-                break
-
-        context.user_data['sentences_videos'] = sentences_videos
-
-        # Delete the message to cause the visual effect
-        chat_id = update.effective_chat.id
-        message_id = context.user_data.get('message_id')
-        if message_id:
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-            except Exception as e:
-                logger.error(f"Error deleting message {message_id}: {e}")
-            del context.user_data['message_id']
-
-        # If no sentences left, inform the user and return to menu
-        if not sentences_videos:
-            await query.message.reply_text(
-                get_translation(context, 'no_sentences_found'),
-                reply_markup=ReplyKeyboardMarkup([[get_translation(context, 'go_back')]], resize_keyboard=True, one_time_keyboard=False)
-            )
+        # Get updated list of sentences
+        language = context.user_data.get('language', 'English')
+        connection = connect_to_db()
+        if not connection:
             return await show_translator_menu(update, context)
 
-        # Display the current sentence-video pair
-        await display_current_sentence_video(update, context)
-        return EDIT_SENTENCES
+        try:
+            cursor = connection.cursor()
+            cursor.execute("""
+                SELECT 
+                    s.sentence_id,
+                    s.sentence_content,
+                    v.file_path,
+                    COALESCE(v.positive_scores, 0) as upvotes,
+                    COALESCE(v.negative_scores, 0) as downvotes
+                FROM sentences s
+                LEFT JOIN videos v ON s.sentence_id = v.text_id
+                WHERE s.user_id = %s AND s.sentence_language = %s
+                ORDER BY s.sentence_id DESC
+            """, (user_id, language))
+            
+            results = cursor.fetchall()
+            cursor.close()
+            connection.close()
+
+            # Delete the current view
+            try:
+                await query.message.delete()
+            except Exception as e:
+                logger.error(f"Error deleting message: {e}")
+
+            # If there are no more sentences
+            if not results:
+                await query.message.reply_text(
+                    get_translation(context, 'no_sentences_found'),
+                    reply_markup=ReplyKeyboardMarkup([[get_translation(context, 'go_back')]], resize_keyboard=True)
+                )
+                return EDIT_SENTENCES
+
+            # Update the sentences in context
+            context.user_data['sentences'] = [
+                {
+                    'id': row[0],
+                    'sentence': row[1],
+                    'video_path': row[2],
+                    'upvotes': row[3],
+                    'downvotes': row[4]
+                }
+                for row in results
+            ]
+
+            # Adjust current page if necessary
+            sentences = context.user_data['sentences']
+            current_page = context.user_data.get('current_page', 1)
+            items_per_page = context.user_data.get('items_per_page', 5)
+            total_pages = (len(sentences) + items_per_page - 1) // items_per_page
+            
+            if current_page > total_pages and total_pages > 0:
+                context.user_data['current_page'] = total_pages
+
+            # Send a new message with updated list
+            await display_edit_sentences_page(update, context)
+            return EDIT_SENTENCES
+
+        except Exception as error:
+            logger.error(f"Error updating view after deletion: {error}")
+            await send_message(update, get_translation(context, 'technical_difficulty'))
+            return await show_translator_menu(update, context)
+
     else:
         logger.error(f"Invalid callback data: {data}")
         return EDIT_SENTENCES
+
 
 async def handle_next_sentence(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     cancel_restarted_message(context)
@@ -1914,15 +2362,13 @@ async def handle_previous_sentence(update: Update, context: ContextTypes.DEFAULT
 
 # Handle navigation in 'Edit Sentences' menu
 async def edit_sentences_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle navigation within the Edit Sentences menu."""
     cancel_restarted_message(context)
-    """Handle navigation within the 'Edit Sentences' menu."""
     user_input = update.message.text if update.message else None
 
     if user_input == get_translation(context, 'go_back'):
-        # Go back to translator menu
         return await show_translator_menu(update, context)
     else:
-        # Unrecognized input, prompt again
         await send_message(update, get_translation(context, 'edit_menu_prompt'))
         return EDIT_SENTENCES
 
@@ -1944,9 +2390,9 @@ async def handle_write_sentence(update: Update, context: ContextTypes.DEFAULT_TY
         return TRANSLATOR_UPLOAD
 
 # Function to generate the next available filename based on the username
-def get_next_available_filename(directory, username, role):
+def get_next_available_filename(directory, username, role, user_id):
     """Find the next available video filename for the user to avoid conflicts."""
-    prefix = f"{role.lower()}_video_{username}_"
+    prefix = f"{role.lower()}_video_{user_id}_{username}_"
     existing_files = [f for f in os.listdir(directory) if f.startswith(prefix)]
 
     # Extract the highest number from existing files
@@ -1979,7 +2425,7 @@ async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
             await send_message(update, get_translation(context, 'bot_restarted'))
             return ConversationHandler.END
 
-        file_path = get_next_available_filename(TRANSLATOR_DIR, username, "translator")
+        file_path = get_next_available_filename(TRANSLATOR_DIR, username, "translator", user_id)
 
         # Get user's language from context
         user_language = context.user_data.get('language', 'unknown')
@@ -2027,7 +2473,7 @@ async def user_video_request(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Retrieve the text_id of the translator's video
         translator_text_id = get_video_text_id(translator_video_id)
 
-        file_path = get_next_available_filename(USER_DIR, username, "user")
+        file_path = get_next_available_filename(USER_DIR, username, "user", user_id)
         await download_video(update.message.video, file_path, context)
 
         # Save the response video with reference to the translator video and sentence_id
@@ -2113,6 +2559,7 @@ def main() -> None:
             TRANSLATOR_MENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, with_fallback_timeout(handle_translator_menu)),
                 CallbackQueryHandler(with_fallback_timeout(handle_pagination_callback), pattern=r"^page_\d+$"),
+                CallbackQueryHandler(with_fallback_timeout(handle_pagination_callback), pattern="^current$"),
             ],
             WRITE_SENTENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, with_fallback_timeout(handle_write_sentence))],
             TRANSLATOR_UPLOAD: [
@@ -2131,10 +2578,11 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, with_fallback_timeout(user_videos_navigation))
             ],
             EDIT_SENTENCES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, with_fallback_timeout(edit_sentences_navigation)),
-                CallbackQueryHandler(with_fallback_timeout(handle_delete_sentence), pattern=r"^delete_\d+$"),
-                CallbackQueryHandler(handle_next_sentence, pattern="^next_sentence$"),
-                CallbackQueryHandler(handle_previous_sentence, pattern="^previous_sentence$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_sentences_navigation),
+                CallbackQueryHandler(handle_delete_sentence, pattern=r"^delete_\d+$"),
+                CallbackQueryHandler(show_sentence_detail, pattern=r"^view_item_\d+$"),
+                CallbackQueryHandler(handle_back_to_list, pattern="^back_to_list$"),
+                CallbackQueryHandler(handle_page_navigation, pattern="^(prev|next)_page$"),
             ],
             VOTING: [
                 CallbackQueryHandler(with_fallback_timeout(handle_vote_up), pattern='^vote_up$'),
