@@ -62,8 +62,15 @@
   "username_prompt": "Es scheint, dass Sie keinen Telegram-Benutzernamen haben.\nBitte geben Sie einen eindeutigen Benutzernamen für diesen Bot ein (nur englische Buchstaben):",
   "invalid_username": "Benutzernamen dürfen nur Buchstaben, Zahlen und Unterstriche enthalten und müssen zwischen 5 und 32 Zeichen lang sein.\nBitte geben Sie einen gültigen Benutzernamen mit englischen Buchstaben ein:",
   "username_taken": "Dieser Benutzername ist bereits vergeben. Bitte wählen Sie einen anderen Benutzernamen:",
-  "generate_otp": "Password for Translator",
-  "otp_code_prompt": "Please enter the OTP code to become a Translator",
-  "otp_verified": "✅ OTP verified successfully! You are now registered as a Translator.",
-  "otp_failed": "❌ Incorrect OTP. Please try again or select a different role."
+  "generate_otp": "Passwort für Übersetzer",
+  "otp_code_prompt": "Bitte geben Sie den OTP-Code ein, um Übersetzer zu werden",
+  "otp_verified": "✅ OTP erfolgreich verifiziert! Sie sind jetzt als Übersetzer registriert.",
+  "otp_failed": "❌ Falscher OTP-Code. Bitte versuchen Sie es erneut oder wählen Sie eine andere Rolle.",
+  "item_not_found": "Element nicht gefunden.",
+  "delete_button": "🗑 Löschen",
+  "back_button": "⬅️ Zurück",
+  "total_sentences": "Gesamtzahl der Sätze: {}\n",
+  "vote_count_format": "    👍: {}    👎: {}\n",
+  "previous_page": "⬅️ Vorherige",
+  "next_page": "Nächste ➡️"
 }

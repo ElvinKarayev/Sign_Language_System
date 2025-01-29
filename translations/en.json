@@ -65,5 +65,12 @@
   "generate_otp": "Password for Translator",
   "otp_code_prompt": "Please enter the OTP code to become a Translator",
   "otp_verified": "✅ OTP verified successfully! You are now registered as a Translator.",
-  "otp_failed": "❌ Incorrect OTP. Please try again or select a different role."
+  "otp_failed": "❌ Incorrect OTP. Please try again or select a different role.",
+  "item_not_found": "Item not found.",
+  "delete_button": "🗑 Delete",
+  "back_button": "⬅️ Back",
+  "total_sentences": "Total Sentences: {}\n",
+  "vote_count_format": "    👍: {}    👎: {}\n",
+  "previous_page": "⬅️ Previous",
+  "next_page": "Next ➡️"
 }

@@ -63,7 +63,14 @@
   "invalid_username": "İstifadəçi adları yalnız hərflər, rəqəmlər və alt xəttlərdən ibarət olmalı və 5 ilə 32 simvol arasında olmalıdır.\nZəhmət olmasa İngilis hərflərindən istifadə edərək etibarlı bir istifadəçi adı daxil edin:",
   "username_taken": "Bu istifadəçi adı artıq istifadə olunur. Zəhmət olmasa başqa bir istifadəçi adı daxil edin:",
   "generate_otp": "Translator üçün KOD",
-  "otp_code_prompt": "Please enter the OTP code to become a Translator",
-  "otp_verified": "✅ OTP verified successfully! You are now registered as a Translator.",
-  "otp_failed": "❌ Incorrect OTP. Please try again or select a different role."
+  "otp_code_prompt": "Tərcüməçi olmaq üçün OTP kodunu daxil edin",
+  "otp_verified": "✅ OTP uğurla təsdiqləndi! Siz artıq Tərcüməçi kimi qeydiyyatdan keçmisiniz.",
+  "otp_failed": "❌ Yanlış OTP. Yenidən cəhd edin və ya fərqli rol seçin.",
+  "item_not_found": "Element tapılmadı.",
+  "delete_button": "🗑 Sil",
+  "back_button": "⬅️ Geri",
+  "total_sentences": "Cəmi Cümlələr: {}\n",
+  "vote_count_format": "    👍: {}    👎: {}\n",
+  "previous_page": "⬅️ Əvvəlki",
+  "next_page": "Növbəti ➡️"
 }
