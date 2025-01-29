@@ -1820,12 +1820,15 @@ async def display_edit_sentences_page(update: Update, context: ContextTypes.DEFA
     current_items = sentences[start_idx:end_idx]
     total_pages = (total_items + items_per_page - 1) // items_per_page
 
-    message_lines = [f"Cəmi Cümlələr: {total_items}\n"]
+    # Create message with translations
+    message_lines = [get_translation(context, 'total_sentences').format(total_items)]
     
     for idx, item in enumerate(current_items, start=start_idx + 1):
         message_lines.append(
-            f"{idx}. {item['sentence']}\n"
-            f"    👍: {item['upvotes']}    👎: {item['downvotes']}\n"
+            f"{idx}. {item['sentence']}\n" +
+            get_translation(context, 'vote_count_format').format(
+                item['upvotes'], item['downvotes']
+            )
         )
     
     message_text = "\n".join(message_lines)
@@ -1843,12 +1846,22 @@ async def display_edit_sentences_page(update: Update, context: ContextTypes.DEFA
     if item_buttons:
         button_rows.append(item_buttons)
     
-    # Navigation buttons in Azerbaijani
+    # Navigation buttons with translations
     nav_buttons = []
     if current_page > 1:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Əvvəlki", callback_data="prev_page"))
+        nav_buttons.append(
+            InlineKeyboardButton(
+                get_translation(context, 'previous_page'),
+                callback_data="prev_page"
+            )
+        )
     if current_page < total_pages:
-        nav_buttons.append(InlineKeyboardButton("Növbəti ➡️", callback_data="next_page"))
+        nav_buttons.append(
+            InlineKeyboardButton(
+                get_translation(context, 'next_page'),
+                callback_data="next_page"
+            )
+        )
     if nav_buttons:
         button_rows.append(nav_buttons)
     
@@ -1916,7 +1929,9 @@ async def show_sentence_detail(update: Update, context: ContextTypes.DEFAULT_TYP
     sentences = context.user_data.get('sentences', [])
     
     if item_idx >= len(sentences):
-        await query.message.reply_text("Item not found.")
+        await query.message.reply_text(
+            get_translation(context, 'item_not_found')
+        )
         return EDIT_SENTENCES
     
     item = sentences[item_idx]
@@ -1924,8 +1939,14 @@ async def show_sentence_detail(update: Update, context: ContextTypes.DEFAULT_TYP
     # Create keyboard for detail view
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🗑 Delete", callback_data=f"delete_{item['id']}"),
-            InlineKeyboardButton("⬅️ Back", callback_data="back_to_list")
+            InlineKeyboardButton(
+                get_translation(context, 'delete_button'), 
+                callback_data=f"delete_{item['id']}"
+            ),
+            InlineKeyboardButton(
+                get_translation(context, 'back_button'), 
+                callback_data="back_to_list"
+            )
         ]
     ])
     
@@ -1944,7 +1965,7 @@ async def show_sentence_detail(update: Update, context: ContextTypes.DEFAULT_TYP
             context.user_data['detail_message_id'] = sent_message.message_id
     else:
         await query.message.reply_text(
-            "Video not found.",
+            get_translation(context, 'video_not_found'),
             reply_markup=keyboard
         )
     
