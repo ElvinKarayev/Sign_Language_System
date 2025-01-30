@@ -278,29 +278,31 @@ def save_video_info(user_id, file_path, language, sentence=None, reference_id=No
     if not connection:
         return
     try:
-        # First, if there's a sentence and no sentence_id provided, save it to sentences table
+        cursor = connection.cursor()
+        
+        # If there's no existing sentence_id but there is a sentence, create new sentence
         if sentence and not sentence_id:
-            cursor = connection.cursor()
             cursor.execute("""
                 INSERT INTO public.sentences (sentence_language, sentence_content, user_id)
                 VALUES (%s, %s, %s) RETURNING sentence_id
             """, (language, sentence, user_id))
             sentence_id = cursor.fetchone()[0]
             connection.commit()
-            cursor.close()
-        # Then save video information
-        cursor = connection.cursor()
+        
+        # Save video information
         cursor.execute("""
             INSERT INTO public.videos 
             (user_id, file_path, text_id, language, video_reference_id, uploaded_at)
             VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
         """, (user_id, full_file_path, sentence_id, language, reference_id))
+        
         connection.commit()
         cursor.close()
         connection.close()
-        logger.info(f"Video and sentence information saved for user {user_id}")
+        logger.info(f"Video information saved for user {user_id}")
     except Exception as error:
         logger.error(f"Error saving video information to database: {error}")
+
 
 def get_random_translator_video(user_language, context=None, exclude_ids=None):
     connection = connect_to_db()
@@ -381,26 +383,27 @@ def get_video_text_id(video_id):
         logger.error(f"Error retrieving text_id for video_id {video_id}: {error}")
         return None
 
-def check_sentence_exists(sentence: str) -> bool:
-    """Check if a sentence already exists in the database."""
+def check_sentence_exists(sentence: str) -> tuple[bool, int | None]:
+    """Check if a sentence exists and return (exists, sentence_id)."""
     connection = connect_to_db()
     if not connection:
-        return False
+        return (False, None)
 
     try:
         cursor = connection.cursor()
         cursor.execute("""
-            SELECT COUNT(*) 
+            SELECT sentence_id 
             FROM public.sentences 
             WHERE LOWER(sentence_content) = LOWER(%s)
         """, (sentence,))
-        count = cursor.fetchone()[0]
+        result = cursor.fetchone()
         cursor.close()
         connection.close()
-        return count > 0
+        return (True, result[0]) if result else (False, None)
     except Exception as error:
         logger.error(f"Error checking sentence existence: {error}")
-        return False
+        return (False, None)
+    
 
 def get_all_sentences(language: str) -> list:
     """Retrieve all sentences for a specific language from the database."""
@@ -450,7 +453,7 @@ def get_sentences_and_videos(user_id, language):
         return []
 
 def delete_sentence_and_video(sentence_id, user_id):
-    """Delete a sentence and its associated video from the database and file system."""
+    """Delete a video and manage the associated sentence based on remaining videos."""
     if not user_id:
         return
     connection = connect_to_db()
@@ -458,32 +461,94 @@ def delete_sentence_and_video(sentence_id, user_id):
         return
     try:
         cursor = connection.cursor()
-        # Get the video file path before any deletion
+        
+        # First, get all videos associated with this sentence
         cursor.execute("""
-            SELECT v.file_path FROM public.videos v
-            WHERE v.text_id = %s AND v.user_id = %s
-        """, (sentence_id, user_id))
-        result = cursor.fetchone()
-        video_file_path = result[0] if result else None
+            SELECT video_id, user_id, file_path 
+            FROM public.videos 
+            WHERE text_id = %s
+        """, (sentence_id,))
+        videos = cursor.fetchall()
+        
+        if len(videos) > 1:
+            # Multiple videos exist for this sentence
+            
+            # Get the video to delete
+            cursor.execute("""
+                SELECT video_id, file_path 
+                FROM public.videos 
+                WHERE text_id = %s AND user_id = %s
+            """, (sentence_id, user_id))
+            video_to_delete = cursor.fetchone()
+            
+            if video_to_delete:
+                video_id, video_file_path = video_to_delete
+                
+                # Delete the specific video
+                cursor.execute("""
+                    DELETE FROM public.videos 
+                    WHERE video_id = %s
+                """, (video_id,))
+                
+                # If this user created the sentence, transfer ownership
+                cursor.execute("""
+                    SELECT user_id FROM public.sentences 
+                    WHERE sentence_id = %s AND user_id = %s
+                """, (sentence_id, user_id))
+                
+                if cursor.fetchone():  # This user owns the sentence
+                    # Get another user who has a video for this sentence
+                    cursor.execute("""
+                        SELECT user_id 
+                        FROM public.videos 
+                        WHERE text_id = %s AND user_id != %s 
+                        LIMIT 1
+                    """, (sentence_id, user_id))
+                    new_owner = cursor.fetchone()
+                    
+                    if new_owner:
+                        # Transfer sentence ownership to the new user
+                        cursor.execute("""
+                            UPDATE public.sentences 
+                            SET user_id = %s 
+                            WHERE sentence_id = %s
+                        """, (new_owner[0], sentence_id))
+                
+                # Delete the video file from filesystem
+                if video_file_path and os.path.exists(video_file_path):
+                    os.remove(video_file_path)
+                    logger.info(f"Deleted video file {video_file_path}")
+                
+        else:
+            # This is the only video for this sentence
+            # Get the video file path before deletion
+            cursor.execute("""
+                SELECT file_path FROM public.videos 
+                WHERE text_id = %s AND user_id = %s
+            """, (sentence_id, user_id))
+            result = cursor.fetchone()
+            video_file_path = result[0] if result else None
 
-        # Delete the sentence first (if using CASCADE, this will delete the video record)
-        cursor.execute("""
-            DELETE FROM public.sentences
-            WHERE sentence_id = %s AND user_id = %s
-        """, (sentence_id, user_id))
+            # Delete both sentence and video
+            cursor.execute("""
+                DELETE FROM public.sentences 
+                WHERE sentence_id = %s AND user_id = %s
+            """, (sentence_id, user_id))
 
-        connection.commit()  # Commit the database deletion
+            # Delete the video file if it exists
+            if video_file_path and os.path.exists(video_file_path):
+                os.remove(video_file_path)
+                logger.info(f"Deleted video file {video_file_path}")
 
-        # Delete the video file from the file system
-        if video_file_path and os.path.exists(video_file_path):
-            os.remove(video_file_path)
-            logger.info(f"Deleted video file {video_file_path}")
-
+        connection.commit()
         cursor.close()
         connection.close()
-        logger.info(f"Deleted sentence {sentence_id} and associated video for user {user_id}")
+        logger.info(f"Successfully processed deletion for sentence {sentence_id} and user {user_id}")
     except Exception as error:
-        logger.error(f"Error deleting sentence and video: {error}")
+        logger.error(f"Error in delete_sentence_and_video: {error}")
+        if connection:
+            connection.close()
+
 
 def get_user_videos_and_translator_videos(user_id):
     """Fetch user's videos and corresponding translator videos."""
@@ -1773,6 +1838,7 @@ async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TY
 
     try:
         cursor = connection.cursor()
+        # Modified query to only get videos created by the current user
         cursor.execute("""
             SELECT 
                 s.sentence_id,
@@ -1780,10 +1846,11 @@ async def handle_edit_sentences(update: Update, context: ContextTypes.DEFAULT_TY
                 v.file_path,
                 COALESCE(v.positive_scores, 0) as upvotes,
                 COALESCE(v.negative_scores, 0) as downvotes
-            FROM sentences s
-            LEFT JOIN videos v ON s.sentence_id = v.text_id
-            WHERE s.user_id = %s AND s.sentence_language = %s
-            ORDER BY s.sentence_id DESC
+            FROM videos v
+            JOIN sentences s ON v.text_id = s.sentence_id
+            WHERE v.user_id = %s 
+            AND v.language = %s
+            ORDER BY v.video_id DESC
         """, (user_id, language))
         
         results = cursor.fetchall()
@@ -2409,17 +2476,27 @@ async def handle_write_sentence(update: Update, context: ContextTypes.DEFAULT_TY
     cancel_restarted_message(context)
     """Handle new sentence input from translator."""
     new_sentence = update.message.text
+    
     # Check if cancel is pressed
     if new_sentence == get_translation(context, 'cancel_button'):
         return await cancel(update, context)
-    # Proceed with handling the sentence if it's not a cancellation
-    if check_sentence_exists(new_sentence):
-        await update.message.reply_text(get_translation(context, 'sentence_exists'))
-        return await show_translator_menu(update, context)
-    else:
+        
+    # Check if sentence exists and get its ID
+    exists, sentence_id = check_sentence_exists(new_sentence)
+    
+    if exists:
+        # Store both the sentence and its ID in context
         context.user_data['sentence'] = new_sentence
-        await update.message.reply_text(get_translation(context, 'video_prompt'))
-        return TRANSLATOR_UPLOAD
+        context.user_data['existing_sentence_id'] = sentence_id
+        await update.message.reply_text(get_translation(context, 'sentence_exists_adding_video'))
+    else:
+        # Just store the sentence for a new entry
+        context.user_data['sentence'] = new_sentence
+        context.user_data['existing_sentence_id'] = None
+        
+    await update.message.reply_text(get_translation(context, 'video_prompt'))
+    return TRANSLATOR_UPLOAD
+
 
 # Function to generate the next available filename based on the username
 def get_next_available_filename(directory, username, role, user_id):
@@ -2458,23 +2535,17 @@ async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
             return ConversationHandler.END
 
         file_path = get_next_available_filename(TRANSLATOR_DIR, username, "translator", user_id)
-
-        # Get user's language from context
         user_language = context.user_data.get('language', 'unknown')
-
-        # Get the sentence from context
         sentence = context.user_data.get('sentence')
+        existing_sentence_id = context.user_data.get('existing_sentence_id')
 
         # Download the video
         await download_video(update.message.video, file_path, context)
 
         # Save video information with language and sentence
-        save_video_info(user_id, file_path, user_language, sentence)
+        save_video_info(user_id, file_path, user_language, sentence, None, existing_sentence_id)
 
-        # Thank the translator and redirect to the menu
         await update.message.reply_text(get_translation(context, 'thank_you_video'))
-
-        # Redirect to translator menu
         return await show_translator_menu(update, context)
 
     elif update.message.text:
