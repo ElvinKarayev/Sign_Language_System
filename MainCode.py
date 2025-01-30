@@ -1365,9 +1365,10 @@ async def show_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     return TRANSLATOR_MENU
 
+
 async def show_user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     cancel_restarted_message(context)
-    """Display the user menu options."""
+    """Display the user instruction video and menu options."""
     # Clear skipped videos when returning to the user menu
     if 'skipped_videos' in context.user_data:
         context.user_data.pop('skipped_videos')
@@ -1378,12 +1379,22 @@ async def show_user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [get_translation(context, 'cancel_button')]
     ]
 
+    # Send video with menu text as caption
+    try:
+        video = open('assets/instruction.mp4', 'rb')
+        await update.message.reply_video(video)
+    except Exception as e:
+        logger.error(f"Error sending instruction video: {e}")
+        # Continue with menu even if video fails
+
+    # Send menu message
     await send_message(
         update,
         get_translation(context, 'user_menu'),
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
     )
     return USER_MENU
+
 
 # Handle translator menu selections
 async def handle_translator_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
