@@ -72,5 +72,6 @@
   "total_sentences": "Gesamtzahl der Sätze: {}\n",
   "vote_count_format": "    👍: {}    👎: {}\n",
   "previous_page": "⬅️ Vorherige",
-  "next_page": "Nächste ➡️"
+  "next_page": "Nächste ➡️",
+  "sentence_exists_adding_video": "Dieser Satz existiert bereits. Ihr Video wird dem vorhandenen Satz hinzugefügt."
 }

@@ -72,5 +72,6 @@
   "total_sentences": "Cəmi Cümlələr: {}\n",
   "vote_count_format": "    👍: {}    👎: {}\n",
   "previous_page": "⬅️ Əvvəlki",
-  "next_page": "Növbəti ➡️"
+  "next_page": "Növbəti ➡️",
+  "sentence_exists_adding_video": "Bu cümlə artıq mövcuddur. Videonuz mövcud cümləyə əlavə edilir."
 }

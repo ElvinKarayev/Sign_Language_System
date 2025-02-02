@@ -72,5 +72,6 @@
   "total_sentences": "Total Sentences: {}\n",
   "vote_count_format": "    👍: {}    👎: {}\n",
   "previous_page": "⬅️ Previous",
-  "next_page": "Next ➡️"
+  "next_page": "Next ➡️",
+  "sentence_exists_adding_video": "This sentence already exists. Adding your video to the existing sentence."
 }
