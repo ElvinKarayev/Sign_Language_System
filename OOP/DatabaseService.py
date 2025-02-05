@@ -165,40 +165,41 @@ class DatabaseService:
             logger.error(f"Error getting user language from database: {error}")
             return None
 
-    def save_video_info(self, user_id, file_path, language,
-                        sentence=None, reference_id=None, sentence_id=None):
-        """
-        Saves video information and associated sentence to the database.
-        If 'sentence' is provided and 'sentence_id' is not provided, it also
-        inserts the new sentence into the 'sentences' table.
-        """
+    def save_video_info(self, user_id, file_path, language, sentence=None, reference_id=None, sentence_id=None):
         connection = self.connect_to_db()
         if not connection:
             return
         
-        # Normalize file path (replace backslashes on Windows, etc.)
-        full_file_path = os.path.abspath(file_path).replace('\\', '/')
-        
         try:
             if sentence and not sentence_id:
-                cursor = connection.cursor()
-                cursor.execute(
-                    """
-                    INSERT INTO public.sentences (sentence_language, sentence_content, user_id)
-                    VALUES (%s, %s, %s)
-                    RETURNING sentence_id
-                    """,
-                    (language, sentence, user_id)
-                )
-                sentence_id = cursor.fetchone()[0]
-                connection.commit()
-                cursor.close()
-            
+                # 1) Check if an identical sentence row (same content & language) already exists
+                existing_id = self._find_sentence_id_if_exists(sentence, language)
+                if existing_id:
+                    # Reuse that row
+                    sentence_id = existing_id
+                    logger.info(f"Reusing existing sentence_id={sentence_id} for content='{sentence}'")
+                else:
+                    # Insert a new row
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        """
+                        INSERT INTO public.sentences (sentence_language, sentence_content, user_id)
+                        VALUES (%s, %s, %s)
+                        RETURNING sentence_id
+                        """,
+                        (language, sentence, user_id)
+                    )
+                    sentence_id = cursor.fetchone()[0]
+                    connection.commit()
+                    cursor.close()
+
+            # 2) Insert row in 'videos' referencing that sentence_id
             cursor = connection.cursor()
+            full_file_path = os.path.abspath(file_path).replace('\\', '/')
             cursor.execute(
                 """
                 INSERT INTO public.videos
-                (user_id, file_path, text_id, language, video_reference_id, uploaded_at)
+                    (user_id, file_path, text_id, language, video_reference_id, uploaded_at)
                 VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 """,
                 (user_id, full_file_path, sentence_id, language, reference_id)
@@ -206,9 +207,44 @@ class DatabaseService:
             connection.commit()
             cursor.close()
             connection.close()
-            logger.info(f"Video and (optional) sentence information saved for user {user_id}")
+            logger.info(f"Video + sentence stored for user {user_id}")
+
         except Exception as error:
-            logger.error(f"Error saving video information to database: {error}")
+            logger.error(f"Error saving video info: {error}")
+            if connection:
+                connection.close()
+
+    
+    def _find_sentence_id_if_exists(self, sentence, language):
+        """
+        Returns the existing sentence_id (int) if `sentence_content` + `language` 
+        already exists in 'sentences'. Otherwise returns None.
+        """
+        conn = self.connect_to_db()
+        if not conn:
+            return None
+        try:
+            cur = conn.cursor()
+            # case-insensitive match if you want EXACT duplicates ignoring case:
+            cur.execute(
+                """
+                SELECT sentence_id 
+                FROM sentences
+                WHERE sentence_language = %s
+                AND LOWER(sentence_content) = LOWER(%s)
+                LIMIT 1
+                """,
+                (language, sentence)
+            )
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+            return row[0] if row else None
+        except Exception as e:
+            logger.error(f"Error in _find_sentence_id_if_exists: {e}")
+            return None
+
+
 
     def get_random_translator_video(self, user_language, context=None, exclude_ids=None):
         """
@@ -342,84 +378,244 @@ class DatabaseService:
             logger.error(f"Error retrieving sentences: {error}")
             return []
 
-    def get_sentences_and_videos(self, user_id, language):
+    def get_translator_videos(self, user_id, language):
         """
-        Fetch sentences and associated translator videos for a given user_id
-        and language. Returns list of tuples: (sentence_id, sentence_content, file_path).
+        Return a list of dicts with:
+        [ { 'id': int, 'sentence': str, 'video_path': str, 'upvotes': int, 'downvotes': int }, ... ]
+        for a specific translator (user_id) and language.
         """
         if not user_id:
             return []
+
         connection = self.connect_to_db()
         if not connection:
             return []
+
         try:
             cursor = connection.cursor()
             cursor.execute(
                 """
-                SELECT s.sentence_id, s.sentence_content, v.file_path
-                FROM public.sentences s
-                LEFT JOIN public.videos v ON s.sentence_id = v.text_id
-                                       AND v.video_reference_id IS NULL
-                WHERE s.user_id = %s
-                  AND s.sentence_language = %s
-                ORDER BY s.sentence_id DESC
+                SELECT v.video_id,
+                    s.sentence_id, 
+                    s.sentence_content,
+                    v.file_path,
+                    COALESCE(v.positive_scores, 0) AS upvotes,
+                    COALESCE(v.negative_scores, 0) AS downvotes
+                FROM sentences s
+                LEFT JOIN videos v ON s.sentence_id = v.text_id
+                WHERE v.user_id = %s
+                AND s.sentence_language = %s AND v.video_reference_id is NULL
+                ORDER BY s.sentence_id DESC, v.uploaded_at DESC
                 """,
                 (user_id, language)
             )
-            results = cursor.fetchall()
+            rows = cursor.fetchall()
             cursor.close()
             connection.close()
+
+            results = []
+            for row in rows:
+                results.append({
+                    'video_id': row[0],
+                    'sentence_id': row[1],
+                    'sentence': row[2],
+                    'video_path': row[3],
+                    'upvotes': row[4],
+                    'downvotes': row[5]
+                })
             return results
-        except Exception as error:
-            logger.error(f"Error fetching sentences and videos: {error}")
+
+        except Exception as e:
+            logger.error(f"get_translator_videos error: {e}")
             return []
 
-    def delete_sentence_and_video(self, sentence_id, user_id):
+
+    def delete_sentence_and_video(self, sentence_id, user_id, video_id):
         """
-        Delete a sentence and its associated video from the database
-        (and file system), provided the sentence is owned by user_id.
+        The 'legacy' approach for when there's exactly 1 video referencing the sentence:
+        - If multiple videos share sentence_id, we call delete_single_video(...) instead.
+        - Otherwise, remove the 'sentences' row (which cascades to remove the 1 referencing 'videos' row).
+            Also remove the video file if we find it.
         """
-        if not user_id:
-            return
+
         connection = self.connect_to_db()
         if not connection:
             return
+
         try:
             cursor = connection.cursor()
-            # Get the video file path before any deletion
-            cursor.execute(
-                """
-                SELECT v.file_path
-                FROM public.videos v
-                WHERE v.text_id = %s
-                  AND v.user_id = %s
-                """,
-                (sentence_id, user_id)
-            )
-            result = cursor.fetchone()
-            video_file_path = result[0] if result else None
 
-            # Delete the sentence (if using CASCADE, the video record is also deleted)
+            # A) Count how many videos reference this sentence
             cursor.execute(
                 """
-                DELETE FROM public.sentences
-                WHERE sentence_id = %s
-                  AND user_id = %s
+                SELECT COUNT(video_id)
+                FROM videos
+                WHERE text_id = %s
                 """,
-                (sentence_id, user_id)
+                (sentence_id,)
+            )
+            vids_count = cursor.fetchone()[0]  # the integer count
+
+            if vids_count > 1:
+                # => multiple references => do NOT do the old full-sentence removal
+                cursor.close()
+                connection.close()
+                logger.info(
+                    f"Multiple videos found for sentence_id={sentence_id}. "
+                    f"Forwarding to delete_single_video with video_id={video_id}."
+                )
+                # Call our single-video deletion
+                self.delete_single_video(video_id, user_id)
+                return
+            else:
+                # => only 1 (or 0) referencing videos => old logic
+
+                # 1) get the file_path of THIS specific video (video_id, user_id)
+                cursor.execute(
+                    """
+                    SELECT v.file_path
+                    FROM videos v
+                    WHERE v.text_id = %s
+                    AND v.user_id = %s
+                    AND v.video_id = %s
+                    """,
+                    (sentence_id, user_id, video_id)
+                )
+                result = cursor.fetchone()
+                video_file_path = result[0] if result else None
+
+                # 2) Delete the 'sentences' row => ON DELETE CASCADE 
+                #    => that one referencing 'videos' row also goes away
+                cursor.execute(
+                    """
+                    DELETE FROM sentences
+                    WHERE sentence_id = %s
+                    AND user_id = %s
+                    """,
+                    (sentence_id, user_id)
+                )
+                connection.commit()
+
+                # 3) If you want to remove the file on disk
+                if video_file_path and os.path.exists(video_file_path):
+                    os.remove(video_file_path)
+                    logger.info(f"Deleted video file {video_file_path}")
+
+                cursor.close()
+                connection.close()
+                logger.info(
+                    f"Deleted sentence {sentence_id} (and associated single video) for user {user_id}"
+                )
+        except Exception as error:
+            logger.error(f"Error in delete_sentence_and_video: {error}")
+            if connection:
+                connection.close()
+
+
+    def delete_single_video(self, video_id, user_id):
+        """
+        Removes exactly one 'videos' row that matches (video_id, user_id).
+        Then checks whether any videos remain referencing that sentence_id.
+        If none remain, delete the parent 'sentences' row.
+        If some remain and the deleted user's ID was also the sentence's owner,
+        reassign the sentence's user_id to another referencing user.
+        Also remove the file on disk if desired.
+        """
+
+        connection = self.connect_to_db()
+        if not connection:
+            return
+
+        try:
+            cursor = connection.cursor()
+            # 1) Identify which sentence_id this video references & the file_path
+            cursor.execute(
+                """
+                SELECT v.text_id, s.user_id, v.file_path
+                FROM videos v
+                JOIN sentences s ON v.text_id = s.sentence_id
+                WHERE v.video_id = %s
+                AND v.user_id = %s
+                """,
+                (video_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                # No matching video row for this (video_id, user_id).
+                cursor.close()
+                connection.close()
+                return
+
+            sentence_id, sentence_owner_id, file_path = row
+
+            # 1a) Remove the file on disk if it exists
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Deleted video file {file_path}")
+
+            # 2) Delete just this one 'videos' row
+            cursor.execute(
+                """
+                DELETE FROM videos
+                WHERE video_id = %s
+                AND user_id = %s
+                """,
+                (video_id, user_id)
             )
             connection.commit()
 
-            # Delete the video file from the file system
-            if video_file_path and os.path.exists(video_file_path):
-                os.remove(video_file_path)
-                logger.info(f"Deleted video file {video_file_path}")
+            # 3) Check how many videos still reference this sentence
+            cursor.execute(
+                """
+                SELECT video_id, user_id
+                FROM videos
+                WHERE text_id = %s
+                """,
+                (sentence_id,)
+            )
+            remaining = cursor.fetchall()
+
+            if not remaining:
+                # (3a) If none remain, remove the parent sentence row
+                cursor.execute(
+                    "DELETE FROM sentences WHERE sentence_id = %s",
+                    (sentence_id,)
+                )
+                connection.commit()
+                logger.info(f"Deleted sentence {sentence_id} because no more videos reference it.")
+            else:
+                # (3b) Some remain referencing the same sentence -> keep the sentence row
+                # If the original sentence owner was the same as the user we just removed,
+                # we reassign 'sentences.user_id' to another referencing user
+                if sentence_owner_id == user_id:
+                    new_owner = None
+                    for (vid, vuser) in remaining:
+                        if vuser != user_id:
+                            new_owner = vuser
+                            break
+                    if new_owner:
+                        cursor.execute(
+                            """
+                            UPDATE sentences
+                            SET user_id = %s
+                            WHERE sentence_id = %s
+                            """,
+                            (new_owner, sentence_id)
+                        )
+                        connection.commit()
+                        logger.info(
+                            f"Reassigned sentence {sentence_id} owner from {user_id} to {new_owner}"
+                        )
 
             cursor.close()
             connection.close()
-            logger.info(f"Deleted sentence {sentence_id} and associated video for user {user_id}")
-        except Exception as error:
-            logger.error(f"Error deleting sentence and video: {error}")
+
+        except Exception as e:
+            if connection:
+                connection.close()
+            logger.error(f"Error in delete_single_video: {e}")
+
+
 
     def get_user_videos_and_translator_videos(self, user_id):
         """
