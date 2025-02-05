@@ -240,9 +240,10 @@ class MainApplication:
                 TRANSLATOR_MENU: [
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_translator_menu)),
                     # Callback queries for pagination, e.g. "prev_page" or "next_page"
-                    CallbackQueryHandler(with_fallback_timeout(self.translator_handlers.handle_page_navigation), pattern="^(prev_page|next_page)$"),
+                    # CallbackQueryHandler(with_fallback_timeout(self.translator_handlers.handle_page_navigation), pattern="^(prev_page|next_page)$"),
                     CallbackQueryHandler(self.handle_page_navigation, pattern=r"^page_\d+$")
                 ],
+
                 WRITE_SENTENCE: [
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_write_sentence))
                 ],
@@ -251,10 +252,10 @@ class MainApplication:
                 ],
                 EDIT_SENTENCES: [
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.edit_sentences_navigation)),
-                    # e.g. callback queries for detail, deletion, etc.
-                    CallbackQueryHandler(self.translator_handlers.handle_delete_sentence, pattern=r"^delete_\d+$"),
-                    CallbackQueryHandler(self.translator_handlers.show_sentence_detail, pattern=r"^view_item_\d+$"),
-                    CallbackQueryHandler(self.translator_handlers.handle_page_navigation, pattern="^(prev|next)_page$"),
+                    CallbackQueryHandler(
+                        self.translator_handlers.edit_sentences_callback,
+                        pattern=r"^(prev_page|next_page|view_item_\d+|delete_\d+|back_to_list)$"
+                    )
                 ],
                 VOTING: [
                     # Inline up/down vote:
