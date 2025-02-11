@@ -17,9 +17,11 @@ class TranslationManager:
         self.loaded_translations = {}  # Cache for already loaded languages
         # Map your supported language names to their file codes (if needed)
         self.language_codes = {
-            'English': 'en',
+            # 'English': 'en',
             'Azerbaijani': 'az',
-            'German': 'de'
+            # 'German': 'de',
+            'Russian': 'ru',
+            'Ukrainian': 'ua'
         }
 
     def get_translation(self, context, key):

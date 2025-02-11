@@ -69,7 +69,7 @@ class RegistrationHandlers:
                 return await userhandler.show_user_menu(update,context)
         else:
             # New user: ask them to select a language
-            reply_keyboard = [["🇬🇧 English", "🇩🇪 German", "🇦🇿 Azerbaijani"]]
+            reply_keyboard = [["🇦🇿 Azerbaijani", "🇷🇺 Russian", "🇺🇦 Ukrainian"]]
             await update.message.reply_text(
                 "Please select your language:",
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard,
@@ -87,12 +87,16 @@ class RegistrationHandlers:
         selected_language = update.message.text
 
         # Optionally map emojis to language names:
-        if "🇬🇧" in selected_language:
-            context.user_data['language'] = 'English'
-        elif "🇩🇪" in selected_language:
-            context.user_data['language'] = 'German'
-        elif "🇦🇿" in selected_language:
+        if "🇦🇿" in selected_language:
             context.user_data['language'] = 'Azerbaijani'
+        # elif "🇩🇪" in selected_language:
+        #     context.user_data['language'] = 'German'
+        # elif "🇬🇧" in selected_language:
+        #     context.user_data['language'] = 'English'
+        elif "🇷🇺" in selected_language:
+            context.user_data['language'] = 'Russian'
+        elif "🇺🇦" in selected_language:
+            context.user_data['language'] = 'Ukrainian'
         else:
             # Handle invalid selection
             await update.message.reply_text("Please select a valid language option.")
