@@ -619,30 +619,50 @@ class DatabaseService:
 
     def get_user_videos_and_translator_videos(self, user_id):
         """
-        Fetch user's videos and corresponding translator videos.
-        Returns a list of dicts:
-          [{ 'user_video_id': ..., 'user_video_path': ..., 'translator_video_path': ... }, ...]
+        Fetch the user's videos and corresponding translator videos,
+        along with upvote/downvote counts from the videos table
+        (i.e. positive_scores / negative_scores).
+        
+        Returns a list of dicts like:
+        [
+        {
+            'user_video_id': ...,
+            'user_video_path': ...,
+            'translator_video_path': ...,
+            'user_upvotes': ...,
+            'user_downvotes': ...
+        },
+        ...
+        ]
         """
         if not user_id:
             return []
+        
         connection = self.connect_to_db()
         if not connection:
             return []
+        
         try:
             cursor = connection.cursor()
+
+            # Use videos.positive_scores and videos.negative_scores
             cursor.execute(
                 """
-                SELECT uv.video_id     AS user_video_id,
-                       uv.file_path    AS user_video_path,
-                       tv.file_path    AS translator_video_path
+                SELECT
+                    uv.video_id        AS user_video_id,
+                    uv.file_path       AS user_video_path,
+                    tv.file_path       AS translator_video_path,
+                    COALESCE(uv.positive_scores, 0) AS user_upvotes,
+                    COALESCE(uv.negative_scores, 0) AS user_downvotes
                 FROM public.videos uv
                 LEFT JOIN public.videos tv
-                       ON uv.video_reference_id = tv.video_id
+                    ON uv.video_reference_id = tv.video_id
                 WHERE uv.user_id = %s
                 ORDER BY uv.uploaded_at DESC
                 """,
                 (user_id,)
             )
+
             results = cursor.fetchall()
             cursor.close()
             connection.close()
@@ -650,14 +670,19 @@ class DatabaseService:
             videos = []
             for row in results:
                 videos.append({
-                    'user_video_id': row[0],
-                    'user_video_path': row[1],
-                    'translator_video_path': row[2]
+                    'user_video_id':         row[0],
+                    'user_video_path':       row[1],
+                    'translator_video_path': row[2],
+                    'user_upvotes':          row[3],  # now from uv.positive_scores
+                    'user_downvotes':        row[4],  # now from uv.negative_scores
                 })
+            
             return videos
+
         except Exception as error:
             logger.error(f"Error fetching user's videos: {error}")
             return []
+
 
     def delete_user_video(self, video_id, user_id):
         """

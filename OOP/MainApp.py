@@ -239,8 +239,6 @@ class MainApplication:
                 # ===== Translator Flow =====
                 TRANSLATOR_MENU: [
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_translator_menu)),
-                    # Callback queries for pagination, e.g. "prev_page" or "next_page"
-                    # CallbackQueryHandler(with_fallback_timeout(self.translator_handlers.handle_page_navigation), pattern="^(prev_page|next_page)$"),
                     CallbackQueryHandler(self.handle_page_navigation, pattern=r"^page_\d+$")
                 ],
 

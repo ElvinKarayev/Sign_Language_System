@@ -289,6 +289,7 @@ class UserHandlers:
         """
         Show the user's current video + translator video side by side using
         messages with 'Next', 'Previous', and 'Delete' buttons.
+        Also display upvote/downvote counts for the user's video.
         """
         user_videos = context.user_data.get('user_videos', [])
         current_index = context.user_data.get('current_index', 0)
@@ -313,7 +314,11 @@ class UserHandlers:
         user_video_path = video_pair['user_video_path']
         translator_video_path = video_pair['translator_video_path']
 
-        # Build inline keyboard
+        # [UPDATED LINE: Retrieve upvote/downvote counts for the user's video]
+        user_upvotes = video_pair.get('user_upvotes', 0)
+        user_downvotes = video_pair.get('user_downvotes', 0)
+
+        # Build inline keyboard (delete / next / prev)
         delete_text = self.translation_manager.get_translation(context, 'delete')
         delete_callback_data = f"delete_user_video_{user_video_id}"
         delete_button = InlineKeyboardButton(text=delete_text, callback_data=delete_callback_data)
@@ -331,9 +336,8 @@ class UserHandlers:
 
         markup = InlineKeyboardMarkup(keyboard_rows)
 
-        # Determine where to send messages from (update.message or callback)
+        # Determine the message to edit/reply to
         message = update.message if update.message else update.callback_query.message
-
         if not message:
             return
 
@@ -345,7 +349,6 @@ class UserHandlers:
         translator_not_found = self.translation_manager.get_translation(context, 'translator_video_not_available')
 
         if 'translator' in message_ids:
-            # We have an existing message
             existing_msg_id = message_ids['translator']
             if translator_video_path and os.path.exists(translator_video_path):
                 await self._edit_video_message(
@@ -358,7 +361,6 @@ class UserHandlers:
                     translator_not_found
                 )
         else:
-            # Need to send a new message
             if translator_video_path and os.path.exists(translator_video_path):
                 msg = await message.reply_video(
                     video=open(translator_video_path, 'rb'),
@@ -373,8 +375,14 @@ class UserHandlers:
         user_video_caption = self.translation_manager.get_translation(context, 'your_video')
         user_video_not_found = self.translation_manager.get_translation(context, 'your_video_not_available')
 
+        # [UPDATED LINE: Retrieve the "vote_count_format" translation and apply it]
+        vote_count_format = self.translation_manager.get_translation(context, 'vote_count_format')
+        # e.g. "    👍: {}    👎: {}\n" or something similar
+
+        # [UPDATED LINE: Append upvote/downvote counts to the user's video caption]
+        user_video_caption += "\n" + vote_count_format.format(user_upvotes, user_downvotes)
+
         if 'user' in message_ids:
-            # We have an existing message
             existing_msg_id = message_ids['user']
             if user_video_path and os.path.exists(user_video_path):
                 await self._edit_video_message(
@@ -389,7 +397,6 @@ class UserHandlers:
                     markup
                 )
         else:
-            # Need to send a new message
             if user_video_path and os.path.exists(user_video_path):
                 msg = await message.reply_video(
                     video=open(user_video_path, 'rb'),
@@ -402,6 +409,7 @@ class UserHandlers:
                 message_ids['user'] = msg.message_id
 
         context.user_data['message_ids'] = message_ids
+
 
     async def handle_next_user_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         cancel_restarted_message(context)
