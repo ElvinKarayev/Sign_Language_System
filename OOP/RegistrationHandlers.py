@@ -1,6 +1,9 @@
 import logging
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import ContextTypes
+from telegram.ext import (
+    ContextTypes,
+    ConversationHandler
+)
 from cancel import cancel_restarted_message
 from TranslatorHandlers import TranslatorHandlers
 from UserHandlers import UserHandlers
@@ -150,10 +153,14 @@ class RegistrationHandlers:
             )
             return ROLE_SELECTION
         elif user_response == cancel_text:
-            # Possibly return a "cancel" state or do your end conversation logic
-            # For example:
-            # await your_cancel_handler(update, context)
-            return -1  # or ConversationHandler.END or any other "cancel" code
+            cancel_text=self.translation_manager.get_translation(context,'cancel_message')
+            start_button=self.translation_manager.get_translation(context,'start_button')
+            reply_keyboard=[[start_button]]
+            await update.message.reply_text(
+                cancel_text,
+                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
+            )
+            return ConversationHandler.END
         else:
             # Unrecognized input
             await update.message.reply_text(invalid_option_text)
@@ -182,13 +189,18 @@ class RegistrationHandlers:
                 
             if db_user_id is None:
                 await update.message.reply_text(technical_difficulty_text)
-                return -1
             # Return the user menu state
             return await userhandler.show_user_menu(update,context)
 
         elif user_choice == cancel_text:
-            # Handle your cancel logic or end conversation
-            return -1
+            cancel_text=self.translation_manager.get_translation(context,'cancel_message')
+            start_button=self.translation_manager.get_translation(context,'start_button')
+            reply_keyboard=[[start_button]]
+            await update.message.reply_text(
+                cancel_text,
+                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
+            )
+            return ConversationHandler.END
 
         else:
             # Not recognized, re-ask
