@@ -1,7 +1,8 @@
 import logging
 import random
 from cancel import cancel_restarted_message
-
+from functools import partial
+from admin import save_user_report
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
@@ -32,7 +33,7 @@ from RegistrationHandlers import (
     LANGUAGE_SELECTION,
     ASK_PERMISSION,
     ROLE_SELECTION,
-    ROLE_OTP_CHECK
+    ROLE_OTP_CHECK,
 )
 # UserHandlers file has the class + states: USER_MENU, USER_REQUEST, USER_VIEW_VIDEOS
 from UserHandlers import (
@@ -48,8 +49,9 @@ from TranslatorHandlers import (
     WRITE_SENTENCE,
     TRANSLATOR_UPLOAD,
     EDIT_SENTENCES,
-    VOTING,
+    VOTING
 )
+CONTACT_ADMIN = 99
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -189,6 +191,8 @@ class MainApplication:
             return await self.translator_handlers.display_sentences_page(update, context)  # Refresh page display
 
 
+
+
     def setup_jobs(self):
         """
         Set up any scheduled jobs, like generating OTP every 5 minutes.
@@ -241,7 +245,6 @@ class MainApplication:
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_translator_menu)),
                     CallbackQueryHandler(self.handle_page_navigation, pattern=r"^page_\d+$")
                 ],
-
                 WRITE_SENTENCE: [
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_write_sentence))
                 ],
@@ -262,6 +265,15 @@ class MainApplication:
                     # If text-based votes:
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_voting_response))
                 ],
+                # ===== CONTACT ADMIN =====
+                CONTACT_ADMIN: [
+                    MessageHandler(
+                        filters.TEXT, 
+                        partial(save_user_report, translation_manager=self.translation_manager, 
+                                translator_handlers=self.translator_handlers, user_handlers=self.user_handlers)
+                    )
+                ]
+
             },
             fallbacks=[
 
@@ -300,9 +312,9 @@ if __name__ == "__main__":
 
     # Create your main app with the relevant file paths
     app = MainApplication(
-        config_path="/home/ubuntu/Sign_Language_System/OOP/config.txt",
-        translations_dir="/home/ubuntu/Sign_Language_System/translations",
-        token_file="/home/ubuntu/Sign_Language_System/OOP/token.txt"  # The file containing your bot token
+        config_path="./config.txt",
+        translations_dir="../translations",
+        token_file="./token.txt"  # The file containing your bot token
     )
 
     app.run()
