@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 from cancel import cancel_restarted_message
 from telegram.ext import ContextTypes
-
+from admin import handle_contact_admin
 logger = logging.getLogger(__name__)
 
 # Example conversation states (import or define them as needed)
@@ -35,24 +35,24 @@ class UserHandlers:
         self.translation_manager = translation_manager
 
     async def show_user_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """
+         """
         Display the main user menu with options:
           - Request a video
           - View your own videos
           - Cancel / go back
         """
-        # If needed, clear 'skipped_videos' when returning to menu
-        if 'skipped_videos' in context.user_data:
-            context.user_data.pop('skipped_videos')
-            logger.info("Cleared skipped_videos when returning to the user menu.")
-        
         user_menu_text = self.translation_manager.get_translation(context, 'user_menu')
         request_video_text = self.translation_manager.get_translation(context, 'request_video')
         view_videos_text = self.translation_manager.get_translation(context, 'view_videos')
+        contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
+
+        # 1) Add a new translation key for "show_my_rank" in your translation files
+        show_my_rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
 
         reply_keyboard = [
             [request_video_text, view_videos_text],
+            [show_my_rank_text, contact_admin_text],
             [cancel_text]
         ]
         message = update.message if update.message else update.callback_query.message
@@ -63,11 +63,12 @@ class UserHandlers:
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
             )
         else:
-            logger.error("Both update.message and update.callback_query.message are None.")
+            logger.error("Both update.message and callback_query.message are None.")
         return USER_MENU
+    
 
     async def handle_user_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        cancel_restarted_message(context)
+        cancel_restarted_message(context)  # <-- THIS LINE WAS MISSING
         """
         Respond to a user's choice on the user menu.
         - 'Request a video' -> handle_user_flow
@@ -78,7 +79,9 @@ class UserHandlers:
         request_video_text = self.translation_manager.get_translation(context, 'request_video')
         view_videos_text = self.translation_manager.get_translation(context, 'view_videos')
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
-        invalid_option_text = self.translation_manager.get_translation(context, 'invalid_option')
+        contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
+        # The new menu text we added
+        show_my_rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
 
         if user_choice == request_video_text:
             return await self.handle_user_flow(update, context)
@@ -86,10 +89,17 @@ class UserHandlers:
         elif user_choice == view_videos_text:
             return await self.handle_view_user_videos(update, context)
 
+        elif user_choice == contact_admin_text:
+            return await handle_contact_admin(update, context, self.translation_manager)
+
+        elif user_choice == show_my_rank_text:
+            return await self.handle_show_user_rank(update, context)
+
         elif user_choice == cancel_text:
-            cancel_text=self.translation_manager.get_translation(context,'cancel_message')
-            start_button=self.translation_manager.get_translation(context,'start_button')
-            reply_keyboard=[[start_button]]
+            # Existing cancel logic...
+            cancel_text = self.translation_manager.get_translation(context, 'cancel_message')
+            start_button = self.translation_manager.get_translation(context, 'start_button')
+            reply_keyboard = [[start_button]]
             await update.message.reply_text(
                 cancel_text,
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -97,8 +107,10 @@ class UserHandlers:
             return ConversationHandler.END
 
         else:
+            invalid_option_text = self.translation_manager.get_translation(context, 'invalid_option')
             await update.message.reply_text(invalid_option_text)
             return USER_MENU
+
 
     async def handle_user_flow(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """
@@ -284,6 +296,7 @@ class UserHandlers:
         else:
             await update.message.reply_text(invalid_option_text)
             return USER_VIEW_VIDEOS
+
 
     async def display_current_user_video_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -500,6 +513,39 @@ class UserHandlers:
         await self.display_current_user_video_group(update, context)
         return USER_VIEW_VIDEOS
 
+        
+    # --------------------------------------------------------------------------
+    # SHOW USER RANK
+    # --------------------------------------------------------------------------
+
+    async def handle_show_user_rank(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        # Use whichever message is actually present (text vs. callback)
+        message = update.message if update.message else update.callback_query.message
+        
+        # Try the existing approach to get user_id
+        user_id = self._get_user_id_from_context(context, update)
+        if not user_id:
+            bot_restarted_text = self.translation_manager.get_translation(context, 'bot_restarted')
+            await message.reply_text(bot_restarted_text)  # <-- note using `message`, not `update.message`
+            return -1  # or return USER_MENU, etc.
+
+        # Existing logic continues...
+        rank_info = self.db_service.get_user_rank_info(user_id, role="User")
+        if not rank_info:
+            ranking_no_data_text = self.translation_manager.get_translation(context, 'ranking_no_data')
+            await message.reply_text(ranking_no_data_text)
+            return await self.show_user_menu(update, context)
+
+        score = rank_info['score']
+        rank = rank_info['rank']
+        video_count = rank_info['video_count']
+
+        ranking_message_text = self.translation_manager.get_translation(context, 'ranking_message')
+        msg = ranking_message_text.format(score=score, rank=rank, video_count=video_count)
+
+        await message.reply_text(msg)  # <-- also use `message`
+        return await self.show_user_menu(update, context)
+
     # --------------------------------------------------------------------------
     # INTERNAL / HELPER METHODS
     # --------------------------------------------------------------------------
@@ -589,3 +635,6 @@ class UserHandlers:
             )
         except Exception as e:
             logger.error(f"Error editing message text: {e}")
+
+
+
