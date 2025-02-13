@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import datetime
 from cancel import cancel_restarted_message
 from telegram import (
     Update, 
@@ -12,6 +13,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
+from admin import handle_contact_admin
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,7 @@ class TranslatorHandlers:
           - Edit Sentences
           - Vote
           - Generate OTP
+          - Contact Admin
           - Cancel
         """
         menu_text = self.translation_manager.get_translation(context, 'menu')
@@ -53,11 +56,12 @@ class TranslatorHandlers:
         vote_text = self.translation_manager.get_translation(context, 'vote')
         generate_otp_text = self.translation_manager.get_translation(context, 'generate_otp')
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
+        contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
 
         reply_keyboard = [
             [view_sentences_text, write_sentence_text],
             [edit_sentences_text, vote_text],
-            [generate_otp_text],
+            [generate_otp_text, contact_admin_text],
             [cancel_text]
         ]
 
@@ -82,6 +86,7 @@ class TranslatorHandlers:
           - Write Sentence -> go to WRITE_SENTENCE
           - Edit Sentences -> handle_edit_sentences
           - Vote -> start_voting
+          - Contact Admin -> handle_contact_admin
           - Generate OTP -> handle_view_otp
           - Cancel -> return or end
         """
@@ -94,6 +99,7 @@ class TranslatorHandlers:
         generate_otp_text = self.translation_manager.get_translation(context, 'generate_otp')
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
         go_back_text = self.translation_manager.get_translation(context, 'go_back')
+        contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
         invalid_option_text = self.translation_manager.get_translation(context, 'invalid_option')
 
         if user_choice == view_sentences_text:
@@ -122,7 +128,8 @@ class TranslatorHandlers:
 
         elif user_choice == generate_otp_text:
             return await self.handle_view_otp(update, context)
-
+        elif user_choice == contact_admin_text:
+            return await handle_contact_admin(update, context, self.translation_manager)
         elif user_choice == cancel_text:
             cancel_text=self.translation_manager.get_translation(context,'cancel_message')
             start_button=self.translation_manager.get_translation(context,'start_button')
