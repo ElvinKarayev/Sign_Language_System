@@ -836,89 +836,51 @@ class DatabaseService:
 
 
   
-    def get_user_rank_info(self, user_id, role="User"):
+    def get_user_rank(self, user_id: int, user_role: str):
         """
-        Retrieves a user's rank information (score, rank, video_count) among all users with the specified role.
-        IMPORTANT: We compute the global rank in the CTE, then filter by user_id in the outer query,
-                so the user sees their true rank among all users, not just rank 1 in a single-row subset.
-
-        :param user_id: The integer ID of the user in the 'users' table.
-        :param role:    The string value of user_role in the database (e.g., "User" or "Translator").
-                    Defaults to "User".
-        :return:        A dict with the keys:
-                        {
-                        'user_id': int,
-                        'video_count': int,
-                        'total_positive': int,
-                        'total_negative': int,
-                        'score': int,
-                        'rank': int
-                        }
-                        or None if no row was found or on error.
+        Retrieves the rank and points of a specific user within their own role category (User or Translator).
+        If the user is a Translator, also fetches the top 5 Translators.
         """
+        
         connection = self.connect_to_db()
         if not connection:
-            return None
+            return None, []
 
         try:
             cursor = connection.cursor()
 
-            # Compute rank among all users of a given role in the WITH subselect (CTE)
-            query = """
-            WITH user_scores AS (
-                SELECT 
-                    v.user_id,
-                    COUNT(*) AS video_count,
-                    COALESCE(SUM(v.positive_scores), 0) AS total_positive,
-                    COALESCE(SUM(v.negative_scores), 0) AS total_negative,
-                    (
-                        COALESCE(SUM(v.positive_scores), 0)
-                        - COALESCE(SUM(v.negative_scores), 0)
-                        + 2 * COUNT(*)
-                    ) AS score,
-                    RANK() OVER (
-                        ORDER BY 
-                            (
-                                COALESCE(SUM(v.positive_scores), 0)
-                                - COALESCE(SUM(v.negative_scores), 0)
-                                + 2 * COUNT(*)
-                            ) DESC
-                    ) AS user_rank
-                FROM videos v
-                JOIN users u ON u.user_id = v.user_id
-                WHERE u.user_role = %s
-                GROUP BY v.user_id
-            )
-            SELECT 
-                user_id,
-                video_count,
-                total_positive, 
-                total_negative,
-                score,
-                user_rank
-            FROM user_scores
-            WHERE user_id = %s
+            # Query to get user's rank and points within their role category
+            get_user_rank_score = """
+                SELECT points, rank FROM (
+                    SELECT user_id, points,
+                        RANK() OVER (ORDER BY points DESC) as rank
+                    FROM users
+                    WHERE user_role = %s
+                ) ranked_users
+                WHERE user_id = %s;
             """
+            cursor.execute(get_user_rank_score, (user_role, user_id))
+            user_rank_score = cursor.fetchone()  # Fetch one row (since we expect a single user)
 
-            # Pass (role, user_id) for the placeholders
-            cursor.execute(query, (role, user_id))
-            result = cursor.fetchone()
+            # If the user is a Translator, fetch the Top 5 Translators
+            top_5_translators = []
+            if user_role == 'Translator':
+                query_top_5 = """
+                    SELECT username, points
+                    FROM users
+                    WHERE user_role = 'Translator'
+                    ORDER BY points DESC
+                    LIMIT 5;
+                """
+                cursor.execute(query_top_5)
+                top_5_translators = cursor.fetchall()  # Fetch all rows for the top 5
 
             cursor.close()
             connection.close()
-
-            if result:
-                return {
-                    'user_id':         result[0],
-                    'video_count':     result[1],
-                    'total_positive':  result[2],
-                    'total_negative':  result[3],
-                    'score':           result[4],
-                    'rank':            result[5]
-                }
-            else:
-                return None
+            return user_rank_score, top_5_translators
 
         except Exception as error:
-            logger.error(f"Error retrieving user rank info: {error}")
-            return None
+            logger.error(f"Error retrieving user rank: {error}")
+            return None, []
+
+
