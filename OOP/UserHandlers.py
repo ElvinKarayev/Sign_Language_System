@@ -53,6 +53,7 @@ class UserHandlers:
         reply_keyboard = [
             [request_video_text, view_videos_text],
             [show_my_rank_text, contact_admin_text],
+            [user_buttons_info],
             [cancel_text]
         ]
 
@@ -128,6 +129,8 @@ class UserHandlers:
             await update.message.reply_text(invalid_option_text)
             return await self.show_user_menu(update,context)
         
+    
+        
     async def handle_user_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         cancel_restarted_message(context)
         """
@@ -137,6 +140,7 @@ class UserHandlers:
         view_videos_text = self.translation_manager.get_translation(context, 'view_videos')
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
         show_my_rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
+        go_back_text = self.translation_manager.get_translation(context, 'go_back')
         
         
         Buttons_explanation=f"""
@@ -562,33 +566,39 @@ class UserHandlers:
     # SHOW USER RANK
     # --------------------------------------------------------------------------
 
-    async def handle_show_user_rank(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        # Use whichever message is actually present (text vs. callback)
-        message = update.message if update.message else update.callback_query.message
-        
-        # Try the existing approach to get user_id
-        user_id = self._get_user_id_from_context(context, update)
+    async def handle_show_user_rank(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Displays the leaderboard with the user's rank, their points, and (if they are a Translator) the top 5 Translators.
+        """
+
+        user_id = context.user_data.get("user_id")  # Get user_id from context
+
+        user_role = context.user_data.get("role")  # Get user role from context
+
+
         if not user_id:
-            bot_restarted_text = self.translation_manager.get_translation(context, 'bot_restarted')
-            await message.reply_text(bot_restarted_text)  # <-- note using `message`, not `update.message`
-            return -1  # or return USER_MENU, etc.
+            await update.message.reply_text("⚠️ Error")
+            return await self.show_translator_menu(update, context)
 
-        # Existing logic continues...
-        rank_info = self.db_service.get_user_rank_info(user_id, role="User")
-        if not rank_info:
-            ranking_no_data_text = self.translation_manager.get_translation(context, 'ranking_no_data')
-            await message.reply_text(ranking_no_data_text)
-            return await self.show_user_menu(update, context)
+        user_rank_data, _ = self.db_service.get_user_rank(user_id, user_role)       
 
-        score = rank_info['score']
-        rank = rank_info['rank']
-        video_count = rank_info['video_count']
+        user_points, rank = user_rank_data  # Extract only points & rank
 
-        ranking_message_text = self.translation_manager.get_translation(context, 'ranking_message')
-        msg = ranking_message_text.format(score=score, rank=rank, video_count=video_count)
+        # Get translated texts from JSON
+        user_rank_text = self.translation_manager.get_translation(context, 'user_rank')  # 🏆 Sənin Reytinqin:
+        user_points_text = self.translation_manager.get_translation(context, 'user_points')  # 📊 Sənin Xalın:
 
-        await message.reply_text(msg)  # <-- also use `message`
-        return await self.show_user_menu(update, context)
+        leaderboard_text = f"{user_rank_text} {rank}\n"
+        leaderboard_text += f"{user_points_text} {user_points}\n"
+        # Back button
+        go_back_text = self.translation_manager.get_translation(context, 'go_back')
+
+        await update.message.reply_text(
+            leaderboard_text,
+            reply_markup=ReplyKeyboardMarkup([[go_back_text]], resize_keyboard=True, one_time_keyboard=True)
+        )
+
+        return USER_MENU
 
     # --------------------------------------------------------------------------
     # INTERNAL / HELPER METHODS

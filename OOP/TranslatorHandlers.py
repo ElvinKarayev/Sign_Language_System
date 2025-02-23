@@ -58,12 +58,12 @@ class TranslatorHandlers:
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
         translator_buttons_info =  self.translation_manager.get_translation(context, 'translator_info')
-
+        rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
         reply_keyboard = [
             [view_sentences_text, write_sentence_text],
             [edit_sentences_text, vote_text],
             [generate_otp_text, contact_admin_text],
-            [translator_buttons_info],
+            [translator_buttons_info, rank_text],
             [cancel_text]
         ]
 
@@ -105,6 +105,7 @@ class TranslatorHandlers:
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
         invalid_option_text = self.translation_manager.get_translation(context, 'invalid_option')
         translator_buttons_info =  self.translation_manager.get_translation(context, 'translator_info')
+        rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
 
         if user_choice == view_sentences_text:
             # If you have a separate function to display all sentences (paged)
@@ -126,13 +127,15 @@ class TranslatorHandlers:
 
         elif user_choice == edit_sentences_text:
             return await self.handle_edit_sentences(update, context)
-
+        
+        elif user_choice == rank_text:
+            return await self.handle_show_leaderboard(update, context)
+        
         elif user_choice == vote_text:
             return await self.start_voting(update, context)
         
         elif user_choice == translator_buttons_info:
             return await self.handle_translator_info(update, context)
-        
         
         elif user_choice == generate_otp_text:
             return await self.handle_view_otp(update, context)
@@ -154,6 +157,53 @@ class TranslatorHandlers:
             # Unrecognized input
             await update.message.reply_text(invalid_option_text)
             return await self.show_translator_menu(update, context)
+    
+    async def handle_show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Displays the leaderboard with the user's rank, their points, and (if they are a Translator) the top 5 Translators.
+        """
+
+        user_id = context.user_data.get("user_id")  # Get user_id from context
+        print(user_id)
+        user_role = context.user_data.get("role")  # Get user role from context
+        print(user_role)
+
+        if not user_id:
+            await update.message.reply_text("⚠️ Error")
+            return await self.show_translator_menu(update, context)
+
+        user_rank_data, top_5_translators = self.db_service.get_user_rank(user_id, user_role)
+
+        # Check if the return type is tuple (Translator) or single value (User)
+       
+
+        user_points, rank = user_rank_data  # Extract only points & rank
+
+        # Get translated texts from JSON
+        user_rank_text = self.translation_manager.get_translation(context, 'user_rank')  # 🏆 Sənin Reytinqin:
+        user_points_text = self.translation_manager.get_translation(context, 'user_points')  # 📊 Sənin Xalın:
+        top_5_translators_text = self.translation_manager.get_translation(context, 'top_5_translators')  # 🌟 Ən Yaxşı 5 Tərcüməçi:
+
+        
+
+        # If the user is a Translator, show the Top 5 Translators
+        leaderboard_text = f"{top_5_translators_text}\n"
+        for index, (translator_name, translator_points) in enumerate(top_5_translators, start=1):
+            leaderboard_text += f"{index}. {translator_name} - {translator_points} points\n"
+        leaderboard_text += f"{user_rank_text} {rank}\n"
+        leaderboard_text += f"{user_points_text} {user_points}\n"
+        # Back button
+        go_back_text = self.translation_manager.get_translation(context, 'go_back')
+
+        await update.message.reply_text(
+            leaderboard_text,
+            reply_markup=ReplyKeyboardMarkup([[go_back_text]], resize_keyboard=True, one_time_keyboard=True)
+        )
+
+        return TRANSLATOR_MENU
+
+
+
         
     async def handle_translator_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         cancel_restarted_message(context)
@@ -684,7 +734,7 @@ class TranslatorHandlers:
             if not os.path.exists(file_path):
                 logger.error(f"Voting video not found: {file_path}")
                 await update.message.reply_text("Video file missing. Try again.")
-                return self.show_translator_menu(update, context)
+                return await self.show_translator_menu(update, context)
 
             # Store the current video id for reference
             context.user_data['current_voting_video_id'] = video_id
