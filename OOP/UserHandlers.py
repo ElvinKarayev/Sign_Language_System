@@ -35,7 +35,7 @@ class UserHandlers:
         self.translation_manager = translation_manager
 
     async def show_user_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-         """
+        """
         Display the main user menu with options:
           - Request a video
           - View your own videos
