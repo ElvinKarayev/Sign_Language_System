@@ -46,7 +46,7 @@ class UserHandlers:
         view_videos_text = self.translation_manager.get_translation(context, 'view_videos')
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
-
+        user_buttons_info =  self.translation_manager.get_translation(context, 'user_info')
          # 1) Add a new translation key for "show_my_rank" in your translation files
         show_my_rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
 
@@ -91,21 +91,27 @@ class UserHandlers:
         view_videos_text = self.translation_manager.get_translation(context, 'view_videos')
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
-        # The new menu text we added
+        go_back_text = self.translation_manager.get_translation(context, 'go_back')
         show_my_rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
+        user_buttons_info =  self.translation_manager.get_translation(context, 'user_info')
 
         if user_choice == request_video_text:
             return await self.handle_user_flow(update, context)
+        
+        elif user_choice == go_back_text:
+            return await self.show_user_menu(update, context)
 
         elif user_choice == view_videos_text:
             return await self.handle_view_user_videos(update, context)
 
         elif user_choice == contact_admin_text:
             return await handle_contact_admin(update, context, self.translation_manager)
-
+        
         elif user_choice == show_my_rank_text:
             return await self.handle_show_user_rank(update, context)
-
+        
+        elif user_choice == user_buttons_info:
+            return await self.handle_user_info(update, context)
         elif user_choice == cancel_text:
             # Existing cancel logic...
             cancel_text = self.translation_manager.get_translation(context, 'cancel_message')
@@ -121,6 +127,33 @@ class UserHandlers:
             invalid_option_text = self.translation_manager.get_translation(context, 'invalid_option')
             await update.message.reply_text(invalid_option_text)
             return await self.show_user_menu(update,context)
+        
+    async def handle_user_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        cancel_restarted_message(context)
+        """
+        Show the detailed explanation of the buttons
+        """
+        request_video_text = self.translation_manager.get_translation(context, 'request_video')
+        view_videos_text = self.translation_manager.get_translation(context, 'view_videos')
+        contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
+        show_my_rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
+        
+        
+        Buttons_explanation=f"""
+        📌 {self.translation_manager.get_translation(context, 'user_menu_options')}
+
+        🔹 {request_video_text} – {self.translation_manager.get_translation(context, 'request_video_explanation')}
+        🔹 {view_videos_text} – {self.translation_manager.get_translation(context, 'view_videos_explanation')}
+        🔹 {show_my_rank_text} – {self.translation_manager.get_translation(context, 'show_my_rank_explanation')}
+        🔹 {contact_admin_text} – {self.translation_manager.get_translation(context, 'contact_admin_explanation')}
+        """
+        
+        
+        await update.message.reply_text(
+            Buttons_explanation,
+            reply_markup=ReplyKeyboardMarkup([[go_back_text]], resize_keyboard=True, one_time_keyboard=True)
+        )
+        return USER_MENU
 
 
     async def handle_user_flow(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
