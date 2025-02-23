@@ -168,7 +168,6 @@ class TranslatorHandlers:
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
         go_back_text = self.translation_manager.get_translation(context, 'go_back')
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
-        go_back_text = self.translation_manager.get_translation(context, 'go_back')
         
         
         Buttons_explanation=f"""
