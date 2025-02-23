@@ -245,12 +245,15 @@ class MainApplication:
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_translator_menu)),
                     CallbackQueryHandler(self.handle_page_navigation, pattern=r"^page_\d+$")
                 ],
+                
                 WRITE_SENTENCE: [
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_write_sentence))
                 ],
+                
                 TRANSLATOR_UPLOAD: [
                     MessageHandler(filters.ALL, with_fallback_timeout(self.translator_handlers.handle_video_upload))
                 ],
+                
                 EDIT_SENTENCES: [
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.edit_sentences_navigation)),
                     CallbackQueryHandler(

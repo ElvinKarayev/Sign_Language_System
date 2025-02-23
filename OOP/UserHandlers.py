@@ -47,7 +47,7 @@ class UserHandlers:
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
 
-        # 1) Add a new translation key for "show_my_rank" in your translation files
+         # 1) Add a new translation key for "show_my_rank" in your translation files
         show_my_rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
 
         reply_keyboard = [
@@ -55,16 +55,27 @@ class UserHandlers:
             [show_my_rank_text, contact_admin_text],
             [cancel_text]
         ]
+
         message = update.message if update.message else update.callback_query.message
 
         if message:
+            # Send the video first
+            try:
+                with open('/home/ubuntu/Sign_Language_System/assets/instruction.mp4', 'rb') as video:
+                    await message.reply_video(video)
+            except Exception as e:
+                logger.error(f"Error sending instruction video: {e}")
+
+            # Send the user menu text with the keyboard
             await message.reply_text(
                 user_menu_text,
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
             )
         else:
             logger.error("Both update.message and callback_query.message are None.")
+        
         return USER_MENU
+
     
 
     async def handle_user_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -109,7 +120,7 @@ class UserHandlers:
         else:
             invalid_option_text = self.translation_manager.get_translation(context, 'invalid_option')
             await update.message.reply_text(invalid_option_text)
-            return USER_MENU
+            return await self.show_user_menu(update,context)
 
 
     async def handle_user_flow(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -513,7 +524,7 @@ class UserHandlers:
         await self.display_current_user_video_group(update, context)
         return USER_VIEW_VIDEOS
 
-        
+
     # --------------------------------------------------------------------------
     # SHOW USER RANK
     # --------------------------------------------------------------------------

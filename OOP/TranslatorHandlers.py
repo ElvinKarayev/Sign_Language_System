@@ -57,11 +57,13 @@ class TranslatorHandlers:
         generate_otp_text = self.translation_manager.get_translation(context, 'generate_otp')
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
+        translator_buttons_info =  self.translation_manager.get_translation(context, 'translator_info')
 
         reply_keyboard = [
             [view_sentences_text, write_sentence_text],
             [edit_sentences_text, vote_text],
             [generate_otp_text, contact_admin_text],
+            [translator_buttons_info],
             [cancel_text]
         ]
 
@@ -88,6 +90,7 @@ class TranslatorHandlers:
           - Vote -> start_voting
           - Contact Admin -> handle_contact_admin
           - Generate OTP -> handle_view_otp
+          - INFO -> handle_view_INFO
           - Cancel -> return or end
         """
         user_choice = update.message.text
@@ -101,6 +104,7 @@ class TranslatorHandlers:
         go_back_text = self.translation_manager.get_translation(context, 'go_back')
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
         invalid_option_text = self.translation_manager.get_translation(context, 'invalid_option')
+        translator_buttons_info =  self.translation_manager.get_translation(context, 'translator_info')
 
         if user_choice == view_sentences_text:
             # If you have a separate function to display all sentences (paged)
@@ -125,11 +129,17 @@ class TranslatorHandlers:
 
         elif user_choice == vote_text:
             return await self.start_voting(update, context)
-
+        
+        elif user_choice == translator_buttons_info:
+            return await self.handle_translator_info(update, context)
+        
+        
         elif user_choice == generate_otp_text:
             return await self.handle_view_otp(update, context)
+        
         elif user_choice == contact_admin_text:
             return await handle_contact_admin(update, context, self.translation_manager)
+        
         elif user_choice == cancel_text:
             cancel_text=self.translation_manager.get_translation(context,'cancel_message')
             start_button=self.translation_manager.get_translation(context,'start_button')
@@ -144,6 +154,40 @@ class TranslatorHandlers:
             # Unrecognized input
             await update.message.reply_text(invalid_option_text)
             return await self.show_translator_menu(update, context)
+        
+    async def handle_translator_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        cancel_restarted_message(context)
+        """
+        Show the detailed explanation of the buttons
+        """
+        view_sentences_text = self.translation_manager.get_translation(context, 'view_sentences')
+        write_sentence_text = self.translation_manager.get_translation(context, 'write_sentence')
+        edit_sentences_text = self.translation_manager.get_translation(context, 'edit_sentences')
+        vote_text = self.translation_manager.get_translation(context, 'vote')
+        generate_otp_text = self.translation_manager.get_translation(context, 'generate_otp')
+        cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
+        go_back_text = self.translation_manager.get_translation(context, 'go_back')
+        contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
+        go_back_text = self.translation_manager.get_translation(context, 'go_back')
+        
+        
+        Buttons_explanation=f"""
+        📌 {self.translation_manager.get_translation(context, 'translator_menu_options')}
+
+        🔹 {view_sentences_text} – {self.translation_manager.get_translation(context, 'view_sentences_explanation')}
+        🔹 {write_sentence_text} – {self.translation_manager.get_translation(context, 'write_sentence_explanation')}
+        🔹 {edit_sentences_text} – {self.translation_manager.get_translation(context, 'edit_sentences_explanation')}
+        🔹 {vote_text} – {self.translation_manager.get_translation(context, 'vote_explanation')}
+        🔹 {generate_otp_text} – {self.translation_manager.get_translation(context, 'code_for_translator_explanation')}
+        🔹 {contact_admin_text} – {self.translation_manager.get_translation(context, 'contact_admin_explanation')}
+        """
+        
+        
+        await update.message.reply_text(
+            Buttons_explanation,
+            reply_markup=ReplyKeyboardMarkup([[go_back_text]], resize_keyboard=True, one_time_keyboard=True)
+        )
+        return TRANSLATOR_MENU
 
     async def handle_view_otp(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         cancel_restarted_message(context)
