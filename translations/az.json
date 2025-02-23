@@ -73,5 +73,16 @@
   "vote_count_format": "    👍: {}    👎: {}\n",
   "previous_page": "⬅️ Əvvəlki",
   "next_page": "Növbəti ➡️",
-  "sentence_exists_adding_video": "Bu cümlə artıq mövcuddur. Videonuz mövcud cümləyə əlavə edilir."
+  "sentence_exists_adding_video": "Bu cümlə artıq mövcuddur. Videonuz mövcud cümləyə əlavə edilir.",
+  "contact_admin":"",
+  "ask_problem_admin":"",
+  "translator_info":"Kömək",
+  "user_info":"Kömək",
+  "contact_admin_explanation": "Dəstək və sorğular bağlı administratora yazmaq üçün bu düymədən istifadə edin.",
+  "view_sentences_explanation": "Botumuzda olan bütün cümlələrin siyahısına baxmağ üçün bu düymədən istifadə edin.",
+  "write_sentence_explanation": "Yeni bir Cümlə yazıb onun işarət dilində tərcüməsi olan videonu yükləmək üçün bu düymədən istifadə edin",
+  "edit_sentences_explanation": "Öz yüklədiyiniz videoları və uyğun tərcümə edilmiş cümlələrini görün və videolarınızı redaktə edin.",
+  "vote_explanation": "Təsadüfi seçilmiş bir videonu və onun uyğun tərcümə edilmiş cümləsinə baxmağ üçün bu düyməni istifadə edin. Tərcümənin düzgün olub-olmadığını göstərmək üçün bəyən və ya bəyənməmə seçimlərini edə bilərsiniz.",
+  "code_for_translator_explanation": "6 rəqəmli birdəfəlik kodu görmək üçün bu düyməni istifadə edin. Əgər kimisə tərcüməçi roluna qoşulmağa dəvət etmək istəyirsinizsə, bu kodu onunla paylaşmalısınız."
+
 }
