@@ -7,6 +7,7 @@ from telegram.ext import (
 from cancel import cancel_restarted_message
 from TranslatorHandlers import TranslatorHandlers
 from UserHandlers import UserHandlers
+from AdminHandlers import AdminHandlers
 logger = logging.getLogger(__name__)
 
 # Example conversation states (you can import or define these enums elsewhere)
@@ -65,6 +66,10 @@ class RegistrationHandlers:
                 translatorhandlers=TranslatorHandlers(self.db_service, self.translation_manager)
                 
                 return await translatorhandlers.show_translator_menu(update, context)
+            elif user_role == 'Admin':
+                adminhandler=AdminHandlers(self.db_service, self.translation_manager)
+                
+                return await adminhandler.show_admin_menu(update, context)
             else:
                 userhandler=UserHandlers(self.db_service,self.translation_manager)
                 
