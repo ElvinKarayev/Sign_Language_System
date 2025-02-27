@@ -193,13 +193,18 @@ class AdminHandlers:
         keyboard = [pagination_buttons] if pagination_buttons else []
         
         reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-
+        reply_markup_keyboard = ReplyKeyboardMarkup(
+        [["⬅️ Back to User Management"]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
         # Edit the message if a button was clicked, otherwise send a new message
         if update.callback_query:
             await update.callback_query.message.edit_text(user_list_text, reply_markup=reply_markup)
             await update.callback_query.answer()
         else:
             await update.message.reply_text(user_list_text, reply_markup=reply_markup)
+            await update.message.reply_text("Use the button below to go back.", reply_markup=reply_markup_keyboard)
 
         context.user_data['current_page'] = page
         return HANDLE_USERS
