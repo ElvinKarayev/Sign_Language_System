@@ -807,14 +807,43 @@ class DatabaseService:
         except Exception as error:
             logger.error(f"Error updating {score_type} for video {video_id}: {error}")
 
+
     def record_vote(self, user_id, video_id, vote_type):
         """
         Record a vote in the votes table. vote_type should be 'up' or 'down'.
+        Returns the newly inserted vote_id.
         """
         if vote_type not in ['up', 'down']:
             logger.error(f"Invalid vote type: {vote_type}")
-            return
+            return None  # Or raise an exception
         
+        connection = self.connect_to_db()
+        if not connection:
+            return None
+        
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                INSERT INTO votes (user_id, video_id, vote_type, vote_timestamp)
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                RETURNING vote_id
+                """,
+                (user_id, video_id, vote_type)
+            )
+            new_vote_id = cursor.fetchone()[0]  # Grab the newly created vote_id
+            connection.commit()
+            cursor.close()
+            connection.close()
+            return new_vote_id
+        except Exception as error:
+            logger.error(f"Error recording vote: {error}")
+            return None
+
+    def update_vote_feedback(self, vote_id, feedback_text):
+        """
+        Update the feedback column for the specified vote_id.
+        """
         connection = self.connect_to_db()
         if not connection:
             return
@@ -823,17 +852,18 @@ class DatabaseService:
             cursor = connection.cursor()
             cursor.execute(
                 """
-                INSERT INTO votes (user_id, video_id, vote_type, vote_timestamp)
-                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                UPDATE votes
+                SET feedback = %s
+                WHERE vote_id = %s
                 """,
-                (user_id, video_id, vote_type)
+                (feedback_text, vote_id)
             )
             connection.commit()
             cursor.close()
             connection.close()
+            logger.info(f"Feedback updated for vote_id={vote_id}")
         except Exception as error:
-            logger.error(f"Error recording vote: {error}")
-
+            logger.error(f"Error updating feedback for vote_id={vote_id}: {error}")
 
   
     def get_user_rank(self, user_id: int, user_role: str):
@@ -882,5 +912,120 @@ class DatabaseService:
         except Exception as error:
             logger.error(f"Error retrieving user rank: {error}")
             return None, []
+    def get_all_users(self):
+        """
+        Retrieve all users from the database.
+        """
+        connection = self.connect_to_db()
+        if not connection:
+            return []
+
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT user_id, username, country, user_role, telegram_id FROM public.users ORDER BY user_id ASC"
+            )
+            users = cursor.fetchall()
+            cursor.close()
+            connection.close()
+
+            return users
+        except Exception as error:
+            logger.error(f"Error retrieving all users: {error}")
+            return []
+
+    def get_users_filtered(self, column, value):
+        """
+        Retrieve users filtered by a specific column (e.g., role, status).
+        :param column: Column to filter by.
+        :param value: Value to filter for.
+        """
+        connection = self.connect_to_db()
+        if not connection:
+            return []
+
+        try:
+            cursor = connection.cursor()
+            query = f"SELECT user_id, username, country, user_role, telegram_id FROM public.users WHERE {column} = %s ORDER BY user_id ASC"
+            cursor.execute(query, (value,))
+            users = cursor.fetchall()
+            cursor.close()
+            connection.close()
+
+            return users
+        except Exception as error:
+            logger.error(f"Error retrieving users by filter ({column}={value}): {error}")
+            return []
+
+    def update_user_info(self, user_id, column, new_value):
+        """
+        Update a specific column for a user.
+        :param user_id: The ID of the user to update.
+        :param column: The column to update (e.g., "user_role", "country").
+        :param new_value: The new value to assign.
+        """
+        connection = self.connect_to_db()
+        if not connection:
+            return False
+
+        try:
+            cursor = connection.cursor()
+            query = f"UPDATE public.users SET {column} = %s WHERE user_id = %s"
+            cursor.execute(query, (new_value, user_id))
+            connection.commit()
+            success = cursor.rowcount > 0  # Check if any row was updated
+            cursor.close()
+            connection.close()
+
+            return success
+        except Exception as error:
+            logger.error(f"Error updating user {user_id}: {error}")
+            return False
+    def delete_user(self, user_id):
+        """
+        Deletes a user from the database.
+        :param user_id: The ID of the user to delete.
+        """
+        connection = self.connect_to_db()
+        if not connection:
+            return False
+
+        try:
+            cursor = connection.cursor()
+            cursor.execute("DELETE FROM public.users WHERE user_id = %s", (user_id,))
+            connection.commit()
+            success = cursor.rowcount > 0  # Check if any row was deleted
+            cursor.close()
+            connection.close()
+
+            return success
+        except Exception as error:
+            logger.error(f"Error deleting user {user_id}: {error}")
+            return False
+        
+    def get_user_table_columns(self):
+        """
+        Fetch the column names of the 'users' table.
+        """
+        connection = self.connect_to_db()
+        if not connection:
+            return []
+
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'users'
+                """
+            )
+            columns = [row[0] for row in cursor.fetchall()]
+            cursor.close()
+            connection.close()
+            return columns
+        except Exception as error:
+            logger.error(f"Error fetching user table columns: {error}")
+            return []
 
 
