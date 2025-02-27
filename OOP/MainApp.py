@@ -49,8 +49,18 @@ from TranslatorHandlers import (
     WRITE_SENTENCE,
     TRANSLATOR_UPLOAD,
     EDIT_SENTENCES,
-    VOTING
+    VOTING, 
+    WAITING_FOR_FEEDBACK,
 )
+from AdminHandlers import (
+    AdminHandlers,
+    ADMIN_MENU,
+    HANDLE_USERS,
+    ASK_FILTER_VALUE,
+    FILTER_USERS
+) 
+
+
 CONTACT_ADMIN = 99
 
 logger = logging.getLogger(__name__)
@@ -162,7 +172,7 @@ class MainApplication:
         self.registration_handlers = RegistrationHandlers(self.db_service, self.translation_manager)
         self.user_handlers = UserHandlers(self.db_service, self.translation_manager)
         self.translator_handlers = TranslatorHandlers(self.db_service, self.translation_manager)
-
+        self.admin_handlers= AdminHandlers(self.db_service, self.translation_manager)
         # 4) Build the Telegram application
         self.application = Application.builder().token(self.token).build()
 
@@ -268,6 +278,12 @@ class MainApplication:
                     # If text-based votes:
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_voting_response))
                 ],
+                WAITING_FOR_FEEDBACK: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, 
+                        with_fallback_timeout(self.translator_handlers.handle_negative_feedback)
+                    ),
+                ],
                 # ===== CONTACT ADMIN =====
                 CONTACT_ADMIN: [
                     MessageHandler(
@@ -275,7 +291,21 @@ class MainApplication:
                         partial(save_user_report, translation_manager=self.translation_manager, 
                                 translator_handlers=self.translator_handlers, user_handlers=self.user_handlers)
                     )
-                ]
+                ],
+                # ===== ADMIN PANEL =====
+                ADMIN_MENU: [
+                    MessageHandler(filters.TEXT, with_fallback_timeout(self.admin_handlers.handle_admin_menu))
+                ],
+                HANDLE_USERS: [MessageHandler(filters.TEXT, with_fallback_timeout(self.admin_handlers.handle_user_choice)),
+                               CallbackQueryHandler(self.admin_handlers.handle_pagination, pattern="^(next_users|prev_users)$"),
+                               CallbackQueryHandler(self.admin_handlers.handle_filtered_pagination, pattern="^(next_filtered_users|prev_filtered_users)$")
+                ],
+                ASK_FILTER_VALUE: [MessageHandler(filters.TEXT, with_fallback_timeout(self.admin_handlers.filter_users))
+                ],
+                FILTER_USERS: [ MessageHandler(filters.TEXT, with_fallback_timeout(self.admin_handlers.show_filtered_users)),
+                                
+                ],
+                
 
             },
             fallbacks=[
