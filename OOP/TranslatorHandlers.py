@@ -23,6 +23,7 @@ WRITE_SENTENCE = 21
 TRANSLATOR_UPLOAD = 22
 EDIT_SENTENCES = 23
 VOTING = 24
+WAITING_FOR_FEEDBACK = 25
 
 class TranslatorHandlers:
     def __init__(self, db_service, translation_manager):
@@ -840,13 +841,16 @@ class TranslatorHandlers:
         # Next video
         return await self.send_next_video_for_voting(update, context)
 
+
     async def handle_vote_down(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        cancel_restarted_message(context)
         """
         Callback version for 'vote_down'.
         """
+        # 1) Cancel any pending fallback job immediately
+        cancel_restarted_message(context)
+        
         query = update.callback_query
-        await query.answer()
+        await query.answer()  # Acknowledge the callback
 
         user_id = self._get_user_id_from_context(context, update)
         if not user_id:
@@ -860,12 +864,58 @@ class TranslatorHandlers:
             await query.message.reply_text(voting_error_text)
             return await self.show_translator_menu(update, context)
 
+        # 2) Increment negative score
         self.db_service.increment_video_score(video_id, 'negative_scores')
-        self.db_service.record_vote(user_id, video_id, 'down')
 
-        await query.message.delete()
+        # 3) Insert the 'down' vote and retrieve the newly created vote_id
+        vote_id = self.db_service.record_vote(user_id, video_id, 'down')
 
+        # 4) Save vote_id to context so we can update its feedback later
+        context.user_data['current_vote_id'] = vote_id
+
+        # 5) Prompt user for feedback
+        downvote_feedback_prompt = self.translation_manager.get_translation(context, 'downvote_feedback_prompt')
+        # (You can translate the prompt_text as needed)
+        await query.message.reply_text(downvote_feedback_prompt)
+
+        # 6) Return a new state: WAITING_FOR_FEEDBACK
+        return WAITING_FOR_FEEDBACK
+
+
+    async def handle_negative_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """
+        User has typed feedback text after downvoting a video.
+        """
+        # 1) Cancel any pending fallback job immediately
+        cancel_restarted_message(context)
+
+        user_feedback = update.message.text
+        vote_id = context.user_data.get('current_vote_id')
+
+        # Safety check
+        if not vote_id:
+            await update.message.reply_text("Something went wrong. Let's go back to main menu.")
+            return await self.show_translator_menu(update, context)
+
+        # 2) Update the DB with the feedback
+        self.db_service.update_vote_feedback(vote_id, user_feedback)
+
+        # 3) Clean up the context
+        del context.user_data['current_vote_id']
+
+        # 4) Optionally remove the old "voting message"
+        if 'current_voting_message_id' in context.user_data:
+            chat_id = update.effective_chat.id
+            message_id = context.user_data['current_voting_message_id']
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            except Exception as e:
+                logger.error(f"Error deleting voting message: {e}")
+            del context.user_data['current_voting_message_id']
+
+        # 5) Finally, move on to the next video
         return await self.send_next_video_for_voting(update, context)
+
 
     async def voting_navigation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """
