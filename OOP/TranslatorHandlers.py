@@ -24,6 +24,10 @@ TRANSLATOR_UPLOAD = 22
 EDIT_SENTENCES = 23
 VOTING = 24
 WAITING_FOR_FEEDBACK = 25
+CLASSROOM_MENU = 101
+CLASSROOM_PASSWORD = 102
+CLASSROOM_CREATION = 103
+
 
 class TranslatorHandlers:
     def __init__(self, db_service, translation_manager):
@@ -48,6 +52,7 @@ class TranslatorHandlers:
           - Vote
           - Generate OTP
           - Contact Admin
+          - My Classrooms
           - Cancel
         """
         menu_text = self.translation_manager.get_translation(context, 'menu')
@@ -60,11 +65,13 @@ class TranslatorHandlers:
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
         translator_buttons_info =  self.translation_manager.get_translation(context, 'translator_info')
         rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
+        my_classrooms_text = self.translation_manager.get_translation(context, 'my_classrooms')
         reply_keyboard = [
             [view_sentences_text, write_sentence_text],
             [edit_sentences_text, vote_text],
             [generate_otp_text, contact_admin_text],
             [translator_buttons_info, rank_text],
+            [my_classrooms_text],
             [cancel_text]
         ]
 
@@ -92,6 +99,7 @@ class TranslatorHandlers:
           - Contact Admin -> handle_contact_admin
           - Generate OTP -> handle_view_otp
           - INFO -> handle_view_INFO
+          - My Classrooms -> show_classroom
           - Cancel -> return or end
         """
         user_choice = update.message.text
@@ -107,6 +115,7 @@ class TranslatorHandlers:
         invalid_option_text = self.translation_manager.get_translation(context, 'invalid_option')
         translator_buttons_info =  self.translation_manager.get_translation(context, 'translator_info')
         rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
+        my_classrooms_text = self.translation_manager.get_translation(context, 'my_classrooms')
 
         if user_choice == view_sentences_text:
             # If you have a separate function to display all sentences (paged)
@@ -144,6 +153,10 @@ class TranslatorHandlers:
         elif user_choice == contact_admin_text:
             return await handle_contact_admin(update, context, self.translation_manager)
         
+        elif user_choice == my_classrooms_text:
+            print("Transitioning to CLASSROOM_MENU")  # Debugging log
+            return await self.show_classrooms_menu(update, context)
+        
         elif user_choice == cancel_text:
             cancel_text=self.translation_manager.get_translation(context,'cancel_message')
             start_button=self.translation_manager.get_translation(context,'start_button')
@@ -158,6 +171,223 @@ class TranslatorHandlers:
             # Unrecognized input
             await update.message.reply_text(invalid_option_text)
             return await self.show_translator_menu(update, context)
+        
+    
+    # --------------------------------------------------------------------------
+    # CLASSROOM MANAGEMENT
+    # --------------------------------------------------------------------------
+    async def show_classrooms_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        cancel_restarted_message(context)
+        """
+        Fetch and display the list of classrooms the user owns, including their passwords.
+        Store the classroom count and indexed list in context for easier selection later.
+        """
+        go_back_text = self.translation_manager.get_translation(context, 'go_back')
+        go_back_list_text = self.translation_manager.get_translation(context, 'go_back_classroom_list')
+        no_classrooms_text = self.translation_manager.get_translation(context, 'no_classrooms')
+        create_classroom_text = self.translation_manager.get_translation(context, 'create_classroom')
+        delete_classroom_text = self.translation_manager.get_translation(context, 'delete_classroom')
+        classroom_choose_an_action_text = self.translation_manager.get_translation(context, 'classroom_choose_an_action')
+        user_id = self._get_user_id_from_context(context, update)
+        message_target = update.message or update.callback_query.message
+        if not user_id:
+            await message_target.reply_text("⚠️ Error: Could not retrieve user ID.")
+            return await self.show_translator_menu(update, context)
+
+        classrooms = self.db_service.get_classrooms_for_user(user_id)
+
+        # Store classroom count and list in context
+        context.user_data['classroom_count'] = len(classrooms) if classrooms else 0
+        context.user_data['classrooms_list'] = classrooms  # Store for selection later
+
+        # Get the selected classroom (if any)
+        selected_classroom = context.user_data.get("selected_classroom")
+
+        if not classrooms:
+            await message_target.reply_text(
+                no_classrooms_text,
+                reply_markup=ReplyKeyboardMarkup(
+                    [[create_classroom_text], [go_back_text]],
+                    resize_keyboard=True,
+                    one_time_keyboard=True
+                )
+            )
+            return CLASSROOM_MENU
+        if selected_classroom:
+            classroom_text = (
+                "🏫 Classroom:\n\n"
+                f"📌 Name: {selected_classroom['classname']}\n"
+                f"🔑 Password: {selected_classroom['password']}\n"
+                f"🆔 Classroom ID: {selected_classroom['classroom_id']}\n\n"
+            )
+            
+            reply_keyboard_buttons = [[delete_classroom_text], [go_back_list_text]]
+            
+            await message_target.reply_text(
+                classroom_text,
+                reply_markup=ReplyKeyboardMarkup(reply_keyboard_buttons, resize_keyboard=True, one_time_keyboard=True)
+            )
+
+            return CLASSROOM_MENU
+        # Format the classroom list with numbering
+        classrooms_text = "🏫 Your Classrooms:\n\n"
+        inline_keyboard_buttons = []
+        
+        for index, classroom in enumerate(classrooms, start=1):
+            classrooms_text += (
+                f"{index}. 📌 Name: {classroom['classname']}\n"
+                f"   🔑 Password: {classroom['password']}\n"
+                f"   🆔 Classroom ID: {classroom['classroom_id']}\n\n"
+            )
+            # Add inline selection button (only numbers)
+            inline_keyboard_buttons.append(InlineKeyboardButton(str(index), callback_data=f"select_classroom_{index}"))
+
+        # Send the classroom list with inline selection buttons
+        await message_target.reply_text(
+            classrooms_text,
+            reply_markup=InlineKeyboardMarkup([inline_keyboard_buttons])
+        )
+
+        # Prepare the reply keyboard for other actions
+        reply_keyboard_buttons = [[create_classroom_text], [go_back_text]]
+        
+        if selected_classroom:
+            reply_keyboard_buttons[0].insert(0, delete_classroom_text)  # Delete button on top if a classroom is selected
+
+        await message_target.reply_text(
+            classroom_choose_an_action_text,
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard_buttons, resize_keyboard=True, one_time_keyboard=True)
+        )
+
+        return CLASSROOM_MENU
+    async def select_classroom_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """
+        Handles the selection of a classroom when the user clicks an inline button.
+        """
+        query = update.callback_query
+        await query.answer()  # Acknowledge the callback
+
+        selected_index = int(query.data.replace("select_classroom_", "")) - 1  # Convert callback_data to index
+        classrooms = context.user_data.get("classrooms_list", [])
+
+        if 0 <= selected_index < len(classrooms):
+            # Store the selected classroom in context
+            selected_classroom = classrooms[selected_index]
+            context.user_data["selected_classroom"] = selected_classroom
+
+            # Send confirmation message
+            selected_text = f"✅ Classroom {selected_index + 1}: {selected_classroom['classname']}."
+            await query.message.reply_text(selected_text)
+
+            # Refresh classroom menu to show "Delete Classroom" option
+            return await self.show_classrooms_menu(update, context)
+
+        else:
+            await query.message.reply_text("⚠️ Invalid selection.")
+            return CLASSROOM_MENU
+
+    
+    async def handle_classroom(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        cancel_restarted_message(context)
+        """
+        Handle user actions in the classroom menu:
+        - Create a new classroom
+        - Go back to the translator menu
+        """
+        user_choice = update.message.text
+
+        create_classroom_text = self.translation_manager.get_translation(context, 'create_classroom')
+        go_back_text = self.translation_manager.get_translation(context, 'go_back')
+        go_back_list_text = self.translation_manager.get_translation(context, 'go_back_classroom_list')
+        
+        if user_choice == create_classroom_text:
+            classroom_count = context.user_data.get('classroom_count', 0)
+
+            if classroom_count >= 5:
+                limit_exceeded_text = self.translation_manager.get_translation(context, 'classroom_limit_exceeded')
+                await update.message.reply_text(limit_exceeded_text)
+                return await self.show_classrooms_menu(update, context)
+
+            # Proceed to classroom creation if limit not reached
+            return await self.prompt_create_classroom(update, context)
+
+        elif user_choice == go_back_text:
+            return await self.show_translator_menu(update, context)
+        elif user_choice == go_back_list_text:
+
+            context.user_data["selected_classroom"] = None
+            return await self.show_classrooms_menu(update, context)
+        else:
+            await update.message.reply_text("⚠️ Invalid option. Please select an available action.")
+            return await self.show_classrooms_menu(update, context)
+    
+    async def prompt_create_classroom(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        cancel_restarted_message(context)
+        """
+        Ask the user to enter a name for the new classroom.
+        """
+        enter_classname_text = self.translation_manager.get_translation(context, 'enter_classname')
+        cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
+
+        await update.message.reply_text(
+            enter_classname_text,
+            reply_markup=ReplyKeyboardMarkup([[cancel_text]], resize_keyboard=True, one_time_keyboard=True)
+        )
+
+        return CLASSROOM_PASSWORD
+    async def prompt_classroom_password(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        cancel_restarted_message(context)
+        """
+        Store the classroom name and ask the user to enter a password.
+        """
+        classroom_name = update.message.text.strip()
+        cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
+
+        if classroom_name == cancel_text:
+            return await self.show_classrooms_menu(update, context)
+
+        # Store the classroom name in context
+        context.user_data['classroom_name'] = classroom_name
+
+        enter_password_text = self.translation_manager.get_translation(context, 'enter_classroom_password')
+        await update.message.reply_text(
+            enter_password_text,
+            reply_markup=ReplyKeyboardMarkup([[cancel_text]], resize_keyboard=True, one_time_keyboard=True)
+        )
+
+        return CLASSROOM_CREATION
+    async def create_classroom(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        cancel_restarted_message(context)
+        """
+        Create a new classroom with the stored name and provided password.
+        """
+        user_id = self._get_user_id_from_context(context, update)
+        if not user_id:
+            await update.message.reply_text("⚠️ Error: Could not retrieve user ID.")
+            return await self.show_classrooms_menu(update, context)
+
+        classroom_name = context.user_data.get('classroom_name', '').strip()
+        classroom_password = update.message.text.strip()
+        cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
+
+        if classroom_password == cancel_text:
+            return await self.show_classrooms_menu(update, context)
+
+        # Securely hash the password before storing it
+        hashed_password = classroom_password
+
+        # Insert classroom into database
+        new_classroom_id = self.db_service.create_classroom(user_id, classroom_name, hashed_password)
+
+        if new_classroom_id:
+            success_text = self.translation_manager.get_translation(context, 'classroom_created').format(classroom_name)
+            await update.message.reply_text(success_text)
+        else:
+            error_text = self.translation_manager.get_translation(context, 'classroom_creation_failed')
+            await update.message.reply_text(error_text)
+
+        return await self.show_classrooms_menu(update, context)
+    
     
     async def handle_show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -997,3 +1227,5 @@ class TranslatorHandlers:
         """
         new_file = await context.bot.get_file(video.file_id)
         await new_file.download_to_drive(file_path)
+
+
