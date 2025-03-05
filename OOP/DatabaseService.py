@@ -1029,3 +1029,131 @@ class DatabaseService:
             return []
 
 
+    def get_feedback_for_video(self, video_id):
+        """
+        Returns a list of feedback (strings) from the votes table
+        for a given video_id.
+        """
+        connection = self.connect_to_db()
+        if not connection:
+            return []
+        
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT feedback
+                FROM public.votes
+                WHERE video_id = %s
+                AND feedback IS NOT NULL
+                AND feedback <> ''
+                """,
+                (video_id,)
+            )
+            rows = cursor.fetchall()
+            cursor.close()
+            connection.close()
+            
+            # Each row is a tuple with one item: the feedback text
+            feedback_list = [row[0] for row in rows]
+            return feedback_list
+        
+        except Exception as e:
+            logger.error(f"Error fetching feedback for video {video_id}: {e}")
+            return []
+
+
+    def check_if_feedback_exists(self, video_id):
+        """
+        Returns True if there is at least one feedback for the given video_id,
+        otherwise False.
+        """
+        connection = self.connect_to_db()
+        if not connection:
+            return False
+        
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT 1
+                FROM public.votes
+                WHERE video_id = %s
+                AND feedback IS NOT NULL
+                AND feedback <> ''
+                LIMIT 1
+                """,
+                (video_id,)
+            )
+            result = cursor.fetchone()
+            cursor.close()
+            connection.close()
+            
+            return bool(result)
+        
+        except Exception as e:
+            logger.error(f"Error checking feedback existence for video {video_id}: {e}")
+            return False
+    
+    def get_classrooms_for_user(self, user_id):
+        """
+        Retrieves the list of classrooms owned by a specific user, including passwords.
+        Returns None if no classrooms exist.
+        """
+        connection = self.connect_to_db()
+        if not connection:
+            return None
+
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT classname, classroom_id, password 
+                FROM public.classroom 
+                WHERE owner = %s
+                """,
+                (user_id,)
+            )
+            results = cursor.fetchall()
+            cursor.close()
+            connection.close()
+
+            if not results:
+                return None  # Return None if the user has no classrooms
+
+            # Convert results to a list of dictionaries
+            return [{'classname': row[0], 'classroom_id': str(row[1]), 'password': row[2]} for row in results]
+
+        except Exception as error:
+            logger.error(f"Error retrieving classrooms for user {user_id}: {error}")
+            return None
+        
+        
+    def create_classroom(self, user_id, classname, password):
+        """
+        Inserts a new classroom for the given user.
+        Returns the new classroom ID if successful, or None if an error occurs.
+        """
+        connection = self.connect_to_db()
+        if not connection:
+            return None
+
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                INSERT INTO public.classroom (owner, classname, password)
+                VALUES (%s, %s, %s)
+                RETURNING classroom_id
+                """,
+                (user_id, classname, password)
+            )
+            new_classroom_id = cursor.fetchone()[0]
+            connection.commit()
+            cursor.close()
+            connection.close()
+            return new_classroom_id
+        except Exception as error:
+            logger.error(f"Error creating classroom: {error}")
+            return None
+
