@@ -51,6 +51,9 @@ from TranslatorHandlers import (
     EDIT_SENTENCES,
     VOTING, 
     WAITING_FOR_FEEDBACK,
+    CLASSROOM_MENU,
+    CLASSROOM_CREATION,
+    CLASSROOM_PASSWORD
 )
 from AdminHandlers import (
     AdminHandlers,
@@ -247,7 +250,10 @@ class MainApplication:
                     CallbackQueryHandler(with_fallback_timeout(self.user_handlers.handle_delete_user_video), pattern=r"^delete_user_video_\d+$"),
                     CallbackQueryHandler(with_fallback_timeout(self.user_handlers.handle_next_user_video), pattern="^next_user_video$"),
                     CallbackQueryHandler(with_fallback_timeout(self.user_handlers.handle_previous_user_video), pattern="^previous_user_video$"),
+                    CallbackQueryHandler(with_fallback_timeout(self.user_handlers.handle_toggle_feedback),
+                         pattern=r"^toggle_feedback_\d+$"),
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.user_handlers.user_videos_navigation))
+
                 ],
 
                 # ===== Translator Flow =====
@@ -284,6 +290,19 @@ class MainApplication:
                         with_fallback_timeout(self.translator_handlers.handle_negative_feedback)
                     ),
                 ],
+                # ===== CLASSROOM =====
+                CLASSROOM_MENU: [
+                    MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_classroom)),
+                    CallbackQueryHandler(self.translator_handlers.select_classroom_callback, pattern=r"^select_classroom_\d+$"),
+                ],
+                
+                CLASSROOM_PASSWORD: [
+                    MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.prompt_classroom_password))
+                ],
+                CLASSROOM_CREATION: [
+                    MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.create_classroom))
+                ],
+                
                 # ===== CONTACT ADMIN =====
                 CONTACT_ADMIN: [
                     MessageHandler(
