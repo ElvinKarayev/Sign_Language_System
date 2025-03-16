@@ -53,7 +53,8 @@ from TranslatorHandlers import (
     WAITING_FOR_FEEDBACK,
     CLASSROOM_MENU,
     CLASSROOM_CREATION,
-    CLASSROOM_PASSWORD
+    CLASSROOM_PASSWORD,
+    CLASSROOM_DELETION
 )
 from AdminHandlers import (
     AdminHandlers,
@@ -263,7 +264,7 @@ class MainApplication:
                 ],
                 
                 WRITE_SENTENCE: [
-                    MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_write_sentence))
+                    MessageHandler(filters.ALL, with_fallback_timeout(self.translator_handlers.handle_write_sentence))
                 ],
                 
                 TRANSLATOR_UPLOAD: [
@@ -293,6 +294,7 @@ class MainApplication:
                 # ===== CLASSROOM =====
                 CLASSROOM_MENU: [
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.handle_classroom)),
+                    CallbackQueryHandler(self.handle_page_navigation, pattern=r"^page_\d+$"),
                     CallbackQueryHandler(self.translator_handlers.select_classroom_callback, pattern=r"^select_classroom_\d+$"),
                 ],
                 
@@ -301,6 +303,9 @@ class MainApplication:
                 ],
                 CLASSROOM_CREATION: [
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.create_classroom))
+                ],
+                CLASSROOM_DELETION: [
+                    MessageHandler(filters.TEXT, with_fallback_timeout(self.translator_handlers.confirm_classroom_deletion))
                 ],
                 
                 # ===== CONTACT ADMIN =====
