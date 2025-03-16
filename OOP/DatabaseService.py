@@ -24,6 +24,7 @@ class DatabaseService:
             self.password = creds.get('db_password')
             self.host = creds.get('db_host')
             self.port = creds.get('db_port')
+            self.connection = self.connect_to_db()
     
     def _read_config_file(self, config_path):
         """
@@ -75,7 +76,7 @@ class DatabaseService:
         Checks if a user exists in the database by telegram_id or username 
         and returns the user's id, username, language, and role if they exist.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return None, None, None, None
         
@@ -91,10 +92,9 @@ class DatabaseService:
                 result = cursor.fetchone()
                 if result:
                     cursor.close()
-                    connection.close()
+
                     return result[0], result[1], result[2], result[3]
             cursor.close()
-            connection.close()
             return None, None, None, None
         except Exception as error:
             logger.error(f"Error checking user in the database: {error}")
@@ -105,7 +105,7 @@ class DatabaseService:
         Inserts a new user into the database after getting consent,
         with role preference.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return None
 
@@ -122,7 +122,6 @@ class DatabaseService:
             db_user_id = cursor.fetchone()[0]
             connection.commit()
             cursor.close()
-            connection.close()
             logger.info(
                 f"New user {username} added to the database with role {role} "
                 f"and telegram_id {telegram_id}."
@@ -131,13 +130,11 @@ class DatabaseService:
         except psycopg2.IntegrityError as error:
             connection.rollback()
             cursor.close()
-            connection.close()
             logger.error(f"IntegrityError: {error}")
             return None
         except Exception as error:
             connection.rollback()
             cursor.close()
-            connection.close()
             logger.error(f"Error adding new user to the database: {error}")
             return None
 
@@ -145,7 +142,7 @@ class DatabaseService:
         """
         Retrieves user's language (country) from the database.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return None
 
@@ -157,7 +154,6 @@ class DatabaseService:
             )
             result = cursor.fetchone()
             cursor.close()
-            connection.close()
             if result:
                 return result[0]
             return None
@@ -165,14 +161,12 @@ class DatabaseService:
             logger.error(f"Error getting user language from database: {error}")
             return None
 
-    def save_video_info(self, user_id, file_path, language, sentence=None, reference_id=None, sentence_id=None):
-        connection = self.connect_to_db()
+    def save_video_info(self, user_id, file_path, language, sentence=None, reference_id=None, sentence_id=None, classroom_id=None):
+        connection = self.connection
         if not connection:
             return
-        
         try:
             if sentence and not sentence_id:
-                # 1) Check if an identical sentence row (same content & language) already exists
                 existing_id = self._find_sentence_id_if_exists(sentence, language)
                 if existing_id:
                     # Reuse that row
@@ -196,23 +190,30 @@ class DatabaseService:
             # 2) Insert row in 'videos' referencing that sentence_id
             cursor = connection.cursor()
             full_file_path = os.path.abspath(file_path).replace('\\', '/')
-            cursor.execute(
-                """
-                INSERT INTO public.videos
-                    (user_id, file_path, text_id, language, video_reference_id, uploaded_at)
-                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                """,
-                (user_id, full_file_path, sentence_id, language, reference_id)
-            )
+            if classroom_id:
+                cursor.execute(
+                    """
+                    INSERT INTO public.videos
+                        (user_id, file_path, text_id, language, video_reference_id, uploaded_at, classroom_id)
+                    VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                    """,
+                    (user_id, full_file_path, sentence_id, language, reference_id, str(classroom_id))
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO public.videos
+                        (user_id, file_path, text_id, language, video_reference_id, uploaded_at)
+                    VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    """,
+                    (user_id, full_file_path, sentence_id, language, reference_id)
+                )
             connection.commit()
             cursor.close()
-            connection.close()
             logger.info(f"Video + sentence stored for user {user_id}")
-
         except Exception as error:
             logger.error(f"Error saving video info: {error}")
-            if connection:
-                connection.close()
+
 
     
     def _find_sentence_id_if_exists(self, sentence, language):
@@ -252,7 +253,7 @@ class DatabaseService:
         given user_language. Optionally exclude a list of video IDs (exclude_ids),
         and exclude videos already responded to or uploaded by the same user.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             logger.error("Failed to connect to database")
             return None, None
@@ -288,23 +289,19 @@ class DatabaseService:
                 if context:
                     context.user_data['current_translator_video_id'] = video_id
                 cursor.close()
-                connection.close()
                 return file_path, sentence
             else:
                 cursor.close()
-                connection.close()
                 return None, None
         except Exception as error:
             logger.error(f"Error fetching translator video: {error}")
-            if connection:
-                connection.close()
             return None, None
 
     def get_video_text_id(self, video_id):
         """
         Retrieve the text_id associated with a video.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return None
         try:
@@ -315,7 +312,6 @@ class DatabaseService:
             )
             result = cursor.fetchone()
             cursor.close()
-            connection.close()
             if result:
                 return result[0]
             return None
@@ -328,7 +324,7 @@ class DatabaseService:
         Check if a sentence already exists in the database
         (case-insensitive match).
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return False
         
@@ -344,7 +340,6 @@ class DatabaseService:
             )
             count = cursor.fetchone()[0]
             cursor.close()
-            connection.close()
             return count > 0
         except Exception as error:
             logger.error(f"Error checking sentence existence: {error}")
@@ -355,7 +350,7 @@ class DatabaseService:
         Retrieve all sentences for a specific language from the database,
         ordered by descending sentence_id.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return []
         
@@ -372,13 +367,12 @@ class DatabaseService:
             )
             results = [row[0] for row in cursor.fetchall()]
             cursor.close()
-            connection.close()
             return results
         except Exception as error:
             logger.error(f"Error retrieving sentences: {error}")
             return []
 
-    def get_translator_videos(self, user_id, language):
+    def get_translator_videos(self, user_id, language, classroom_id=None):
         """
         Return a list of dicts with:
         [ { 'id': int, 'sentence': str, 'video_path': str, 'upvotes': int, 'downvotes': int }, ... ]
@@ -387,14 +381,13 @@ class DatabaseService:
         if not user_id:
             return []
 
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return []
 
         try:
             cursor = connection.cursor()
-            cursor.execute(
-                """
+            query ="""
                 SELECT v.video_id,
                     s.sentence_id, 
                     s.sentence_content,
@@ -405,13 +398,15 @@ class DatabaseService:
                 LEFT JOIN videos v ON s.sentence_id = v.text_id
                 WHERE v.user_id = %s
                 AND s.sentence_language = %s AND v.video_reference_id is NULL
-                ORDER BY s.sentence_id DESC, v.uploaded_at DESC
-                """,
-                (user_id, language)
-            )
+                """
+            params = [user_id, language]
+            if classroom_id:
+                query += " AND v.classroom_id = %s"
+                params.append(classroom_id)
+            query += " ORDER BY s.sentence_id DESC, v.uploaded_at DESC"
+            cursor.execute(query,tuple(params))
             rows = cursor.fetchall()
             cursor.close()
-            connection.close()
 
             results = []
             for row in rows:
@@ -438,7 +433,7 @@ class DatabaseService:
             Also remove the video file if we find it.
         """
 
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return
 
@@ -459,7 +454,6 @@ class DatabaseService:
             if vids_count > 1:
                 # => multiple references => do NOT do the old full-sentence removal
                 cursor.close()
-                connection.close()
                 logger.info(
                     f"Multiple videos found for sentence_id={sentence_id}. "
                     f"Forwarding to delete_single_video with video_id={video_id}."
@@ -502,14 +496,11 @@ class DatabaseService:
                     logger.info(f"Deleted video file {video_file_path}")
 
                 cursor.close()
-                connection.close()
                 logger.info(
                     f"Deleted sentence {sentence_id} (and associated single video) for user {user_id}"
                 )
         except Exception as error:
             logger.error(f"Error in delete_sentence_and_video: {error}")
-            if connection:
-                connection.close()
 
 
     def delete_single_video(self, video_id, user_id):
@@ -522,7 +513,7 @@ class DatabaseService:
         Also remove the file on disk if desired.
         """
 
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return
 
@@ -543,7 +534,6 @@ class DatabaseService:
             if not row:
                 # No matching video row for this (video_id, user_id).
                 cursor.close()
-                connection.close()
                 return
 
             sentence_id, sentence_owner_id, file_path = row
@@ -608,11 +598,8 @@ class DatabaseService:
                         )
 
             cursor.close()
-            connection.close()
 
         except Exception as e:
-            if connection:
-                connection.close()
             logger.error(f"Error in delete_single_video: {e}")
 
 
@@ -638,7 +625,7 @@ class DatabaseService:
         if not user_id:
             return []
         
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return []
         
@@ -665,7 +652,6 @@ class DatabaseService:
 
             results = cursor.fetchall()
             cursor.close()
-            connection.close()
 
             videos = []
             for row in results:
@@ -691,7 +677,7 @@ class DatabaseService:
         """
         if not user_id:
             return
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return
         try:
@@ -725,12 +711,10 @@ class DatabaseService:
                     os.remove(video_file_path)
                     logger.info(f"Deleted user video file {video_file_path}")
                 cursor.close()
-                connection.close()
                 logger.info(f"Deleted user video {video_id} for user {user_id}")
             else:
                 logger.error(f"Video with id {video_id} not found for user {user_id}")
                 cursor.close()
-                connection.close()
         except Exception as error:
             logger.error(f"Error deleting user video: {error}")
 
@@ -740,7 +724,7 @@ class DatabaseService:
         and not yet voted on by the current user.
         Returns (video_id, file_path, sentence_content) or None if no video found.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             logger.error("Failed to connect to database")
             return None
@@ -766,16 +750,12 @@ class DatabaseService:
                 chosen_result = random.choice(all_results)
                 video_id, file_path, sentence_content = chosen_result
                 cursor.close()
-                connection.close()
                 return video_id, file_path, sentence_content
             else:
                 cursor.close()
-                connection.close()
                 return None
         except Exception as error:
             logger.error(f"Error fetching random video for voting: {error}")
-            if connection:
-                connection.close()
             return None
 
     def increment_video_score(self, video_id, score_type):
@@ -787,7 +767,7 @@ class DatabaseService:
             logger.error(f"Invalid score type: {score_type}")
             return
         
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return
         
@@ -803,7 +783,6 @@ class DatabaseService:
             )
             connection.commit()
             cursor.close()
-            connection.close()
         except Exception as error:
             logger.error(f"Error updating {score_type} for video {video_id}: {error}")
 
@@ -817,7 +796,7 @@ class DatabaseService:
             logger.error(f"Invalid vote type: {vote_type}")
             return None  # Or raise an exception
         
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return None
         
@@ -834,7 +813,6 @@ class DatabaseService:
             new_vote_id = cursor.fetchone()[0]  # Grab the newly created vote_id
             connection.commit()
             cursor.close()
-            connection.close()
             return new_vote_id
         except Exception as error:
             logger.error(f"Error recording vote: {error}")
@@ -844,7 +822,7 @@ class DatabaseService:
         """
         Update the feedback column for the specified vote_id.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return
         
@@ -860,7 +838,6 @@ class DatabaseService:
             )
             connection.commit()
             cursor.close()
-            connection.close()
             logger.info(f"Feedback updated for vote_id={vote_id}")
         except Exception as error:
             logger.error(f"Error updating feedback for vote_id={vote_id}: {error}")
@@ -872,7 +849,7 @@ class DatabaseService:
         If the user is a Translator, also fetches the top 5 Translators.
         """
         
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return None, []
 
@@ -906,7 +883,6 @@ class DatabaseService:
                 top_5_translators = cursor.fetchall()  # Fetch all rows for the top 5
 
             cursor.close()
-            connection.close()
             return user_rank_score, top_5_translators
 
         except Exception as error:
@@ -916,7 +892,7 @@ class DatabaseService:
         """
         Retrieve all users from the database.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return []
 
@@ -927,7 +903,6 @@ class DatabaseService:
             )
             users = cursor.fetchall()
             cursor.close()
-            connection.close()
 
             return users
         except Exception as error:
@@ -940,7 +915,7 @@ class DatabaseService:
         :param column: Column to filter by.
         :param value: Value to filter for.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return []
 
@@ -950,7 +925,6 @@ class DatabaseService:
             cursor.execute(query, (value,))
             users = cursor.fetchall()
             cursor.close()
-            connection.close()
 
             return users
         except Exception as error:
@@ -964,7 +938,7 @@ class DatabaseService:
         :param column: The column to update (e.g., "user_role", "country").
         :param new_value: The new value to assign.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return False
 
@@ -975,7 +949,6 @@ class DatabaseService:
             connection.commit()
             success = cursor.rowcount > 0  # Check if any row was updated
             cursor.close()
-            connection.close()
 
             return success
         except Exception as error:
@@ -986,7 +959,7 @@ class DatabaseService:
         Deletes a user from the database.
         :param user_id: The ID of the user to delete.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return False
 
@@ -996,7 +969,6 @@ class DatabaseService:
             connection.commit()
             success = cursor.rowcount > 0  # Check if any row was deleted
             cursor.close()
-            connection.close()
 
             return success
         except Exception as error:
@@ -1007,7 +979,7 @@ class DatabaseService:
         """
         Fetch the column names of the 'users' table.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return []
 
@@ -1022,7 +994,6 @@ class DatabaseService:
             )
             columns = [row[0] for row in cursor.fetchall()]
             cursor.close()
-            connection.close()
             return columns
         except Exception as error:
             logger.error(f"Error fetching user table columns: {error}")
@@ -1034,7 +1005,7 @@ class DatabaseService:
         Returns a list of feedback (strings) from the votes table
         for a given video_id.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return []
         
@@ -1052,7 +1023,6 @@ class DatabaseService:
             )
             rows = cursor.fetchall()
             cursor.close()
-            connection.close()
             
             # Each row is a tuple with one item: the feedback text
             feedback_list = [row[0] for row in rows]
@@ -1068,7 +1038,7 @@ class DatabaseService:
         Returns True if there is at least one feedback for the given video_id,
         otherwise False.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return False
         
@@ -1087,7 +1057,6 @@ class DatabaseService:
             )
             result = cursor.fetchone()
             cursor.close()
-            connection.close()
             
             return bool(result)
         
@@ -1100,7 +1069,7 @@ class DatabaseService:
         Retrieves the list of classrooms owned by a specific user, including passwords.
         Returns None if no classrooms exist.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return None
 
@@ -1116,7 +1085,6 @@ class DatabaseService:
             )
             results = cursor.fetchall()
             cursor.close()
-            connection.close()
 
             if not results:
                 return None  # Return None if the user has no classrooms
@@ -1134,7 +1102,7 @@ class DatabaseService:
         Inserts a new classroom for the given user.
         Returns the new classroom ID if successful, or None if an error occurs.
         """
-        connection = self.connect_to_db()
+        connection = self.connection
         if not connection:
             return None
 
@@ -1151,9 +1119,56 @@ class DatabaseService:
             new_classroom_id = cursor.fetchone()[0]
             connection.commit()
             cursor.close()
-            connection.close()
             return new_classroom_id
         except Exception as error:
             logger.error(f"Error creating classroom: {error}")
             return None
+    def delete_classroom(self, classroom_id: str) -> bool:
+        """
+        Deletes a classroom from the database.
+        :param classroom_id: The ID of the classroom to delete.
+        :return: True if deletion was successful, False otherwise.
+        """
+        connection = self.connection
+        if not connection:
+            return False
+
+        try:
+            cursor = connection.cursor()
+            cursor.execute("DELETE FROM public.classroom WHERE classroom_id = %s", (classroom_id,))
+            connection.commit()
+            cursor.close()
+            return True  # ✅ Deletion successful
+        except Exception as error:
+            logger.error(f"Error deleting classroom {classroom_id}: {error}")
+            return False  # ❌ Deletion failed
+    def get_classroom_sentences(self, classroom_id, language):
+        """
+        Fetch all sentences from videos that belong to a specific classroom.
+        
+
+        :return: A list of unique sentences for the given classroom.
+        """
+        connection = self.connection
+        if not connection:
+            return []
+
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT s.sentence_content
+                FROM public.videos v
+                JOIN public.sentences s ON v.text_id = s.sentence_id
+                WHERE v.classroom_id = %s AND s.sentence_language = %s AND v.video_reference_id is NULL
+                ORDER BY v.uploaded_at DESC
+                """,
+                (classroom_id, language)
+            )
+            sentences = [row[0] for row in cursor.fetchall()]
+            cursor.close()
+            return sentences
+        except Exception as error:
+            logger.error(f"Error retrieving classroom sentences for {classroom_id}: {error}")
+            return []
 
