@@ -105,28 +105,6 @@ python bot/main.py
 - **PostgreSQL** – Database for storing users, translations, and rankings
 - **Spring Boot (Planned for Admin Panel)** – Web-based management interface
 
----
 
-## **Translator Incentive System**
-
-To **attract and retain skilled translators**, we have implemented a **performance-based payment system**.
-
-### **Reward Tiers:**
-
-- **Top 5% of translators** → **150 AZN each**
-- **Next 10% (excluding Top 5%)** → **100 AZN each**
-- **Next 15% (excluding Top 5% and 10%)** → **50 AZN each**
-
----
-
-## **Future Enhancements**
-
-- **Admin Panel (Spring Boot-based UI)**
-- **Real-Time AI Sign Language Translation** (Live sign-to-text conversion)
-- **ASAN Center Deployment** (Government service integration)
-- **Cross-Sign Language Translation** (ASL → Russian Sign Language)
-- **Advanced Gesture Detection with MediaPipe**
-
----
 
 
