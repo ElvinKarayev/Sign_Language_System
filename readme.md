@@ -31,10 +31,6 @@ This project aims to bridge communication barriers for the **deaf and hard-of-he
 │   ├── config.py                    # Configuration settings (API keys, database)
 │   ├── utils.py                      # Helper functions for bot interactions
 │
-├── models/
-│   ├── mediapipe_model.py           # Real-time sign language recognition
-│   ├── sign_language_model.py       # AI model for gesture-based text conversion
-│
 ├── datasets/
 │   ├── user_videos/                 # User-submitted videos
 │   ├── translator_videos/           # Verified translator-provided videos
