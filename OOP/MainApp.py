@@ -41,6 +41,8 @@ from UserHandlers import (
     USER_MENU,
     USER_REQUEST,
     USER_VIEW_VIDEOS,
+    CLASS_PASSWORD,
+    JOIN_CLASSROOM
 )
 # TranslatorHandlers file has the class + states: TRANSLATOR_MENU, WRITE_SENTENCE, TRANSLATOR_UPLOAD, EDIT_SENTENCES, VOTING
 from TranslatorHandlers import (
@@ -256,6 +258,14 @@ class MainApplication:
                     MessageHandler(filters.TEXT, with_fallback_timeout(self.user_handlers.user_videos_navigation))
 
                 ],
+                
+                CLASS_PASSWORD: [
+                    MessageHandler(filters.ALL, with_fallback_timeout(self.user_handlers.handle_class_password))
+                ],
+                JOIN_CLASSROOM: [
+                    MessageHandler(filters.ALL, with_fallback_timeout(self.user_handlers.handle_join_classroom))
+                ],
+                
 
                 # ===== Translator Flow =====
                 TRANSLATOR_MENU: [
