@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 USER_MENU = 5
 USER_VIEW_VIDEOS = 11
 USER_REQUEST = 12
+CLASS_PASSWORD = 13
+JOIN_CLASSROOM = 14
 
 class UserHandlers:
     def __init__(self, db_service, translation_manager):
@@ -47,15 +49,40 @@ class UserHandlers:
         contact_admin_text =  self.translation_manager.get_translation(context, 'contact_admin')
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
         user_buttons_info =  self.translation_manager.get_translation(context, 'user_info')
-         # 1) Add a new translation key for "show_my_rank" in your translation files
         show_my_rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
+        join_classroom_text = self.translation_manager.get_translation(context, 'join_classroom')
 
-        reply_keyboard = [
-            [request_video_text, view_videos_text],
-            [show_my_rank_text, contact_admin_text],
-            [user_buttons_info],
-            [cancel_text]
-        ]
+        if context.user_data.get('classroom_view', False):
+            # User is viewing the classroom
+            go_back_to_main_menu_text = self.translation_manager.get_translation(context, 'go_back_to_main_menu')
+            remove_classroom_text = self.translation_manager.get_translation(context, 'remove_classroom')
+            user_menu_text = self.translation_manager.get_translation(context, 'classroom_menu')
+            reply_keyboard = [
+                [request_video_text, view_videos_text, go_back_to_main_menu_text],
+                [contact_admin_text],
+                [user_buttons_info],
+                [remove_classroom_text]
+            ]
+        else:
+            # User is not viewing the classroom
+            if context.user_data.get("classroom_id", None):
+                # User is part of a classroom, so show "Open Classroom" button
+                open_classroom_text = self.translation_manager.get_translation(context, 'open_classroom')
+                show_my_rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
+                
+                reply_keyboard = [
+                    [request_video_text, view_videos_text, open_classroom_text],
+                    [show_my_rank_text, contact_admin_text],
+                    [user_buttons_info],
+                    [cancel_text]
+                ]
+            else:
+                # User is not part of any classroom
+                reply_keyboard = [
+                    [request_video_text, view_videos_text, join_classroom_text],
+                    [contact_admin_text, user_buttons_info],
+                    [cancel_text]
+                ]
 
         message = update.message if update.message else update.callback_query.message
 
@@ -95,10 +122,42 @@ class UserHandlers:
         go_back_text = self.translation_manager.get_translation(context, 'go_back')
         show_my_rank_text = self.translation_manager.get_translation(context, 'show_my_rank')
         user_buttons_info =  self.translation_manager.get_translation(context, 'user_info')
-
-        if user_choice == request_video_text:
-            return await self.handle_user_flow(update, context)
+        join_classroom_text = self.translation_manager.get_translation(context, 'join_classroom')
+        open_classroom = self.translation_manager.get_translation(context, 'open_classroom')
+        close_classroom = self.translation_manager.get_translation(context, 'go_back_to_main_menu')
+        remove_classroom = self.translation_manager.get_translation(context, 'remove_classroom')
         
+        if user_choice == request_video_text:
+            context.user_data['skipped_videos']=set()
+            return await self.handle_user_flow(update, context)
+        elif user_choice == open_classroom:
+            context.user_data['classroom_view'] = True  # Set classroom_view to True
+            return await self.show_user_menu(update, context)
+        elif user_choice == close_classroom:
+            context.user_data['classroom_view'] = False  # Set classroom_view back to False
+            return await self.show_user_menu(update, context)
+        elif user_choice == join_classroom_text:
+            join_classroom_prompt = self.translation_manager.get_translation(context, 'enter_classroom_id')
+            reply_keyboard = [[cancel_text]]
+            await update.message.reply_text(
+                join_classroom_prompt, 
+                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
+            )
+            return CLASS_PASSWORD
+        elif user_choice == remove_classroom:
+            success_message = self.translation_manager.get_translation(context, 'classroom_remove_success')
+            failure_message = self.translation_manager.get_translation(context, 'classroom_remove_failure')
+            user_id = self._get_user_id_from_context(context, update)
+            if user_id:
+                success = self.db_service.remove_user_from_classroom(user_id)
+                if success:
+                    context.user_data['classroom_id'] = None  # Set classroom_id to None
+                    context.user_data['classroom_view'] = False  # Set classroom_view to None
+                    await update.message.reply_text(success_message)
+                else:
+                    await update.message.reply_text(failure_message)
+        
+            return await self.show_user_menu(update, context)
         elif user_choice == go_back_text:
             return await self.show_user_menu(update, context)
 
@@ -128,6 +187,65 @@ class UserHandlers:
             invalid_option_text = self.translation_manager.get_translation(context, 'invalid_option')
             await update.message.reply_text(invalid_option_text)
             return await self.show_user_menu(update,context)
+    async def handle_class_password(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        cancel_restarted_message(context)
+        user_input = update.message.text
+        cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
+        if user_input == cancel_text:
+        # If user pressed cancel, return to the user menu
+            return await self.show_user_menu(update, context)
+        # got classroom_ID from user_input then here prompts for the password
+        context.user_data['temporary_classroom_id'] = user_input
+        
+        reply_keyboard = [[cancel_text]]  # Show only the Cancel button
+        enter_password_prompt = self.translation_manager.get_translation(context, 'enter_classroom_password')
+        # Send the password prompt with the updated keyboard
+        await update.message.reply_text(
+            enter_password_prompt,
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
+        )    
+        return JOIN_CLASSROOM
+    
+    async def handle_join_classroom(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        cancel_restarted_message(context)
+        user_input = update.message.text
+        cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
+        if user_input == cancel_text:
+        # If user pressed cancel, return to the user menu
+            return await self.show_user_menu(update, context)
+        # Retrieve the temporary classroom ID from the context
+        classroom_id = context.user_data.get('temporary_classroom_id')
+        password = user_input
+        if not classroom_id:
+            # If no classroom ID is found in the context, return an error message.
+            await update.message.reply_text("Error: No classroom ID stored.")
+            return USER_MENU
+        
+        # Validate the classroom ID and password in the database
+        is_valid = self.db_service.validate_classroom_credentials(classroom_id, password)
+        
+        if is_valid:
+            # If the credentials are valid, proceed to mark the user as joined
+            context.user_data['classroom_id'] = classroom_id  # Store the valid classroom ID
+
+            # Update the user's status in the database (set 'joined_classroom' to True)
+            user_id = self._get_user_id_from_context(context, update)  # Get the user ID from the context or DB
+            if user_id:
+                self.db_service.update_user_classroom_status(user_id, classroom_id)
+
+            # Success message
+            success_message = self.translation_manager.get_translation(context, 'classroom_join_success')
+            await update.message.reply_text(success_message)
+
+            return await self.show_user_menu(update,context)  # Return to the user menu
+
+        else:
+            # If the credentials are invalid, return a failure message
+            failure_message = self.translation_manager.get_translation(context, 'classroom_join_failure')
+            await update.message.reply_text(failure_message)
+
+            return await self.show_user_menu(update,context) # Return to the user menu after failure
+
         
     
         
@@ -170,9 +288,9 @@ class UserHandlers:
         skipped_videos = context.user_data.get('skipped_videos', set())
 
         logger.info(f"Handling user flow for language: {user_language}, skipped: {skipped_videos}")
-
+        classroom_id = context.user_data.get('classroom_id') if context.user_data.get('classroom_view') else None
         # Fetch a random translator video, excluding the user's own videos or skipped ones
-        file_path, sentence = self.db_service.get_random_translator_video(user_language, context, exclude_ids=skipped_videos)
+        file_path, sentence = self.db_service.get_random_translator_video(user_language, context, exclude_ids=skipped_videos, classroom_id=classroom_id)
         if file_path:
             if os.path.exists(file_path):
                 try:
@@ -231,7 +349,7 @@ class UserHandlers:
             user_id = self._get_user_id_from_context(context, update)
             if not user_id:
                 await update.message.reply_text(bot_restarted_text)
-                return -1  # or ConversationHandler.END
+                return await self.show_user_menu(update,context)  # or ConversationHandler.END
 
             # We need to store the user's response referencing the translator video
             translator_video_id = context.user_data.get('current_translator_video_id')
@@ -243,19 +361,31 @@ class UserHandlers:
             
             # Insert DB row referencing the translator video
             user_language = context.user_data.get('language', 'English')
-            self.db_service.save_video_info(
-                user_id=user_id,
-                file_path=file_path,
-                language=user_language,
-                sentence=None,
-                reference_id=translator_video_id,
-                sentence_id=translator_text_id
-            )
+            classroom_id = context.user_data.get('classroom_id')
+            if context.user_data.get('classroom_view') and classroom_id:
+                self.db_service.save_video_info(
+                    user_id=user_id,
+                    file_path=file_path,
+                    language=user_language,
+                    sentence=None,
+                    reference_id=translator_video_id,
+                    sentence_id=translator_text_id,
+                    classroom_id=classroom_id  # Store the classroom_id for classroom-related videos
+                )
+            else:
+                self.db_service.save_video_info(
+                    user_id=user_id,
+                    file_path=file_path,
+                    language=user_language,
+                    sentence=None,
+                    reference_id=translator_video_id,
+                    sentence_id=translator_text_id
+                )
 
             await update.message.reply_text(thank_you_response_text)
 
             # Fetch next translator video
-            file_path2, sentence = self.db_service.get_random_translator_video(user_language, context)
+            file_path2, sentence = self.db_service.get_random_translator_video(user_language, context, classroom_id=classroom_id)
             if file_path2 and os.path.exists(file_path2):
                 with open(file_path2, 'rb') as video_file:
                     await update.message.reply_video(video_file)
@@ -348,21 +478,29 @@ class UserHandlers:
 
     async def display_current_user_video_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
-        Show the user's current video + translator video side by side using
-        messages with 'Next', 'Previous', and 'Delete' buttons.
+        Show the user's current video + translator video side by side with:
+        - Delete button
+        - Next/Previous navigation
+        - (Optional) View/Hide Feedback button
         Also display upvote/downvote counts for the user's video.
         """
         user_videos = context.user_data.get('user_videos', [])
         current_index = context.user_data.get('current_index', 0)
-
+        
+        # --------------------------------------------------------------------------------
+        # 1) If the user has no videos
+        # --------------------------------------------------------------------------------
         if not user_videos:
+            # Was hardcoded: "You have no uploaded videos."
+            # Now from JSON:
             no_uploaded_videos_text = self.translation_manager.get_translation(context, 'no_uploaded_videos')
+            
             message = update.message if update.message else update.callback_query.message
             if message:
                 await message.reply_text(no_uploaded_videos_text)
-            return await self.show_user_menu(update, context)
-
-        # Bound check
+            return  # Possibly return to some menu
+        
+        # Ensure current_index is within valid range
         if current_index >= len(user_videos):
             current_index = len(user_videos) - 1
             context.user_data['current_index'] = current_index
@@ -370,45 +508,90 @@ class UserHandlers:
             current_index = 0
             context.user_data['current_index'] = current_index
 
+        # Extract data from the current pair
         video_pair = user_videos[current_index]
         user_video_id = video_pair['user_video_id']
         user_video_path = video_pair['user_video_path']
         translator_video_path = video_pair['translator_video_path']
 
-        # [UPDATED LINE: Retrieve upvote/downvote counts for the user's video]
+        # Upvotes/Downvotes
         user_upvotes = video_pair.get('user_upvotes', 0)
         user_downvotes = video_pair.get('user_downvotes', 0)
 
-        # Build inline keyboard (delete / next / prev)
+        # --------------------------------------------------------------------------------
+        # 2) Build Captions
+        # --------------------------------------------------------------------------------
+        # Hardcoded: "Translator's Video" / "Your Video"
+        # Now from JSON:
+        translator_caption = self.translation_manager.get_translation(context, 'translator_video')
+        user_video_caption = self.translation_manager.get_translation(context, 'your_video')
+        
+        # Hardcoded: "Upvotes: {} | Downvotes: {}"
+        # We have a key like "vote_count_format": "Upvotes: {} | Downvotes: {}"
+        vote_count_format = self.translation_manager.get_translation(context, 'vote_count_format')
+        user_video_caption += "\n" + vote_count_format.format(user_upvotes, user_downvotes)
+
+        # --------------------------------------------------------------------------------
+        # 3) Build Inline Keyboard
+        # --------------------------------------------------------------------------------
+        # Hardcoded: "Delete"
+        # Now from JSON:
         delete_text = self.translation_manager.get_translation(context, 'delete')
         delete_callback_data = f"delete_user_video_{user_video_id}"
-        delete_button = InlineKeyboardButton(text=delete_text, callback_data=delete_callback_data)
+        delete_button = InlineKeyboardButton(delete_text, callback_data=delete_callback_data)
 
+        feedback_exists = self.db_service.check_if_feedback_exists(user_video_id)
+        feedback_shown_map = context.user_data.get("feedback_shown", {})
+        feedback_shown = feedback_shown_map.get(user_video_id, False)
+
+        # Hardcoded: "View Feedback" / "Hide Feedback"
+        # Add keys in JSON if missing: "view_feedback" and "hide_feedback"
+        row1 = [delete_button]
+        if feedback_exists:
+            feedback_text = (self.translation_manager.get_translation(context, 'hide_feedback')
+                            if feedback_shown
+                            else self.translation_manager.get_translation(context, 'view_feedback'))
+            feedback_callback_data = f"toggle_feedback_{user_video_id}"
+            feedback_button = InlineKeyboardButton(feedback_text, callback_data=feedback_callback_data)
+            row1.append(feedback_button)
+
+        # Hardcoded: "Previous" / "Next"
+        # We have "previous_page" and "next_page" in JSON
         nav_buttons = []
         if current_index > 0:
-            nav_buttons.append(InlineKeyboardButton("Previous", callback_data="previous_user_video"))
+            nav_buttons.append(
+                InlineKeyboardButton(
+                    self.translation_manager.get_translation(context, 'previous_page'),
+                    callback_data="previous_user_video"
+                )
+            )
         if current_index < len(user_videos) - 1:
-            nav_buttons.append(InlineKeyboardButton("Next", callback_data="next_user_video"))
+            nav_buttons.append(
+                InlineKeyboardButton(
+                    self.translation_manager.get_translation(context, 'next_page'),
+                    callback_data="next_user_video"
+                )
+            )
 
-        # Combine rows
-        keyboard_rows = [[delete_button]]
+        keyboard_rows = [row1]
         if nav_buttons:
             keyboard_rows.append(nav_buttons)
 
         markup = InlineKeyboardMarkup(keyboard_rows)
 
-        # Determine the message to edit/reply to
         message = update.message if update.message else update.callback_query.message
         if not message:
             return
-
         chat_id = message.chat_id
+
         message_ids = context.user_data.get('message_ids', {})
 
-        # 1) Show/Update translator video
-        translator_caption = self.translation_manager.get_translation(context, 'translator_video')
+        # --------------------------------------------------------------------------------
+        # 4) Show/Update Translator Video
+        # --------------------------------------------------------------------------------
+        # Hardcoded: "Translator video not available."
         translator_not_found = self.translation_manager.get_translation(context, 'translator_video_not_available')
-
+        
         if 'translator' in message_ids:
             existing_msg_id = message_ids['translator']
             if translator_video_path and os.path.exists(translator_video_path):
@@ -432,30 +615,23 @@ class UserHandlers:
                 msg = await message.reply_text(translator_not_found)
                 message_ids['translator'] = msg.message_id
 
-        # 2) Show/Update user video
-        user_video_caption = self.translation_manager.get_translation(context, 'your_video')
+        # --------------------------------------------------------------------------------
+        # 5) Show/Update User Video
+        # --------------------------------------------------------------------------------
+        # Hardcoded: "Your video not available."
         user_video_not_found = self.translation_manager.get_translation(context, 'your_video_not_available')
-
-        # [UPDATED LINE: Retrieve the "vote_count_format" translation and apply it]
-        vote_count_format = self.translation_manager.get_translation(context, 'vote_count_format')
-        # e.g. "    👍: {}    👎: {}\n" or something similar
-
-        # [UPDATED LINE: Append upvote/downvote counts to the user's video caption]
-        user_video_caption += "\n" + vote_count_format.format(user_upvotes, user_downvotes)
-
+        
         if 'user' in message_ids:
             existing_msg_id = message_ids['user']
             if user_video_path and os.path.exists(user_video_path):
                 await self._edit_video_message(
                     context, chat_id, existing_msg_id,
-                    user_video_path, user_video_caption,
-                    markup
+                    user_video_path, user_video_caption, markup
                 )
             else:
                 await self._edit_text_message(
                     context, chat_id, existing_msg_id,
-                    user_video_not_found,
-                    markup
+                    user_video_not_found, markup
                 )
         else:
             if user_video_path and os.path.exists(user_video_path):
@@ -466,40 +642,61 @@ class UserHandlers:
                 )
                 message_ids['user'] = msg.message_id
             else:
-                msg = await message.reply_text(user_video_not_found, reply_markup=markup)
+                msg = await message.reply_text(
+                    user_video_not_found,
+                    reply_markup=markup
+                )
                 message_ids['user'] = msg.message_id
 
         context.user_data['message_ids'] = message_ids
-
+        
+    
 
     async def handle_next_user_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        cancel_restarted_message(context)
-        """
-        Callback for the "Next" button in the inline keyboard.
-        Increments current index, shows the next video group.
-        """
+        cancel_restarted_message(context)  # If needed to reset fallback
+
         query = update.callback_query
         await query.answer()
 
-        context.user_data['current_index'] += 1
+        user_videos = context.user_data.get('user_videos', [])
+        current_index = context.user_data.get('current_index', 0)
+
+        # 1) Hide feedback from current video (if any)
+        if 0 <= current_index < len(user_videos):
+            current_video_id = user_videos[current_index]['user_video_id']
+            await self.hide_feedback_for_video(context, current_video_id, query.message.chat_id)
+
+        # 2) Now move to the next video
+        context.user_data['current_index'] = current_index + 1
+
+        # 3) Redisplay
         await self.display_current_user_video_group(update, context)
         return USER_VIEW_VIDEOS
+
 
     async def handle_previous_user_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         cancel_restarted_message(context)
-        """
-        Callback for the "Previous" button in the inline keyboard.
-        Decrements current index, shows the previous video group.
-        """
+
         query = update.callback_query
         await query.answer()
 
-        context.user_data['current_index'] -= 1
+        user_videos = context.user_data.get('user_videos', [])
+        current_index = context.user_data.get('current_index', 0)
+
+        # Hide old feedback
+        if 0 <= current_index < len(user_videos):
+            current_video_id = user_videos[current_index]['user_video_id']
+            await self.hide_feedback_for_video(context, current_video_id, query.message.chat_id)
+
+        context.user_data['current_index'] = current_index - 1
+
         await self.display_current_user_video_group(update, context)
         return USER_VIEW_VIDEOS
 
+
     async def handle_delete_user_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        cancel_restarted_message(context)
+        cancel_restarted_message(context)  # If you use this pattern to reset fallback.
+
         """
         Callback for the "Delete" button in the inline keyboard.
         Deletes the user's video from DB/filesystem, re-renders the list.
@@ -520,16 +717,20 @@ class UserHandlers:
             await query.message.reply_text(bot_restarted_text)
             return -1
 
-        # Delete from DB
+        # 1) HIDE FEEDBACK (if any) BEFORE DELETING
+        await self.hide_feedback_for_video(context, user_video_id, query.message.chat_id)
+
+        # 2) Delete from DB
         self.db_service.delete_user_video(user_video_id, user_id)
 
-        # Remove from context's user_videos
+        # 3) Remove from context's user_videos
         user_videos = context.user_data.get('user_videos', [])
         current_index = context.user_data.get('current_index', 0)
 
         for i, video_pair in enumerate(user_videos):
             if video_pair['user_video_id'] == user_video_id:
                 user_videos.pop(i)
+                # adjust the current_index if needed
                 if current_index >= len(user_videos):
                     current_index = len(user_videos) - 1
                 context.user_data['current_index'] = current_index
@@ -537,7 +738,7 @@ class UserHandlers:
 
         context.user_data['user_videos'] = user_videos
 
-        # Delete old messages visually
+        # 4) Delete old messages (the user & translator videos) from chat
         chat_id = update.effective_chat.id
         message_ids = context.user_data.get('message_ids', {})
         for mid in message_ids.values():
@@ -547,7 +748,7 @@ class UserHandlers:
                 logger.error(f"Error deleting message {mid}: {e}")
         context.user_data.pop('message_ids', None)
 
-        # If no videos left
+        # 5) If no videos left, show user a "no more videos" message
         if not user_videos:
             no_videos_text = self.translation_manager.get_translation(context, 'your_video_not_available')
             start_text = self.translation_manager.get_translation(context, 'start_button')
@@ -555,11 +756,12 @@ class UserHandlers:
                 no_videos_text,
                 reply_markup=ReplyKeyboardMarkup([[start_text]], one_time_keyboard=True)
             )
-            return await self.show_user_menu(update,context)
+            return await self.show_user_menu(update, context)
         
-        # Else, show the updated group
+        # 6) Else, show updated group
         await self.display_current_user_video_group(update, context)
         return USER_VIEW_VIDEOS
+
 
 
     # --------------------------------------------------------------------------
@@ -692,3 +894,138 @@ class UserHandlers:
 
 
 
+
+    async def handle_toggle_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        cancel_restarted_message(context)
+        query = update.callback_query
+        await query.answer()  # acknowledge to remove loading spinner
+
+        data = query.data  # e.g. "toggle_feedback_123"
+        match = re.match(r"toggle_feedback_(\d+)", data)
+        if not match:
+            logger.error(f"Invalid callback data: {data}")
+            return
+
+        video_id = int(match.group(1))
+
+        # Retrieve or init the dictionary that tracks which videos' feedback is shown
+        feedback_shown_map = context.user_data.get("feedback_shown", {})
+        currently_shown = feedback_shown_map.get(video_id, False)
+
+        # If feedback was not being shown, we need to show it
+        if not currently_shown:
+            feedback_list = self.db_service.get_feedback_for_video(video_id)
+            if not feedback_list:
+                await query.message.reply_text("No feedback for this video yet.")
+                return
+
+            # Build feedback text
+            feedback_text = "\n".join([f"• {feedback}" for feedback in feedback_list])
+            feedback_msg = await query.message.reply_text(f"Feedback:\n{feedback_text}")
+
+            # Mark it as shown
+            feedback_shown_map[video_id] = True
+            context.user_data["feedback_shown"] = feedback_shown_map
+
+            # Store the feedback message ID so we can delete it later
+            if "feedback_message_ids" not in context.user_data:
+                context.user_data["feedback_message_ids"] = {}
+            context.user_data["feedback_message_ids"][video_id] = feedback_msg.message_id
+
+        # If feedback was being shown, hide (delete) the feedback message
+        else:
+            feedback_message_ids = context.user_data.get("feedback_message_ids", {})
+            feedback_msg_id = feedback_message_ids.get(video_id)
+            if feedback_msg_id:
+                try:
+                    await context.bot.delete_message(
+                        chat_id=query.message.chat.id,
+                        message_id=feedback_msg_id
+                    )
+                except Exception as e:
+                    logger.error(f"Error deleting feedback message: {e}")
+
+            feedback_shown_map[video_id] = False
+            context.user_data["feedback_shown"] = feedback_shown_map
+
+        # After toggling, we need to update the inline keyboard
+        await self._update_user_video_keyboard(update, context, video_id)
+        
+    
+    async def hide_feedback_for_video(self, context, video_id: int, chat_id: int):
+        """
+        Hides (deletes) the feedback message for a given video_id if it's currently visible,
+        and updates context to mark feedback as hidden.
+        """
+        feedback_shown_map = context.user_data.get("feedback_shown", {})
+        currently_shown = feedback_shown_map.get(video_id, False)
+
+        if currently_shown:
+            # If feedback was visible, find its message ID and delete it
+            feedback_message_ids = context.user_data.get("feedback_message_ids", {})
+            msg_id = feedback_message_ids.get(video_id)
+            if msg_id:
+                try:
+                    await context.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=msg_id
+                    )
+                except Exception as e:
+                    logger.error(f"Error deleting feedback message: {e}")
+
+                # Remove from the dictionary so we don't double-delete
+                feedback_message_ids.pop(video_id, None)
+                context.user_data["feedback_message_ids"] = feedback_message_ids
+
+            # Mark it as hidden
+            feedback_shown_map[video_id] = False
+            context.user_data["feedback_shown"] = feedback_shown_map
+
+
+    async def _update_user_video_keyboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE, video_id: int):
+        # Get the current index from context, etc.
+        user_videos = context.user_data.get('user_videos', [])
+        current_index = context.user_data.get('current_index', 0)
+        if current_index >= len(user_videos):
+            return
+
+        # Build the new keyboard based on updated feedback_shown state
+        feedback_exists = self.db_service.check_if_feedback_exists(video_id)
+        feedback_shown_map = context.user_data.get("feedback_shown", {})
+        feedback_shown = feedback_shown_map.get(video_id, False)
+
+        nav_buttons = []
+        if current_index > 0:
+            nav_buttons.append(InlineKeyboardButton("Previous", callback_data="previous_user_video"))
+        if current_index < len(user_videos) - 1:
+            nav_buttons.append(InlineKeyboardButton("Next", callback_data="next_user_video"))
+
+        delete_callback_data = f"delete_user_video_{video_id}"
+        delete_button = InlineKeyboardButton("Delete", callback_data=delete_callback_data)
+        
+        row1 = [delete_button]
+        if feedback_exists:
+            feedback_text = "Hide Feedback" if feedback_shown else "View Feedback"
+            row1.append(InlineKeyboardButton(feedback_text, callback_data=f"toggle_feedback_{video_id}"))
+
+        keyboard_rows = [row1]
+        if nav_buttons:
+            keyboard_rows.append(nav_buttons)
+
+        markup = InlineKeyboardMarkup(keyboard_rows)
+
+        # Now edit the existing user video message to update only the keyboard
+        message_ids = context.user_data.get('message_ids', {})
+        user_msg_id = message_ids.get('user')  # "user" is how you track the user's video message ID
+        if not user_msg_id:
+            return
+
+        chat_id = update.effective_chat.id
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=user_msg_id,
+                reply_markup=markup
+            )
+        except Exception as e:
+            logger.error(f"Error updating user video keyboard: {e}")
