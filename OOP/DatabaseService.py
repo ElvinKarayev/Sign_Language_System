@@ -78,27 +78,27 @@ class DatabaseService:
         """
         connection = self.connection
         if not connection:
-            return None, None, None, None
+            return None, None, None, None, None
         
         try:
             cursor = connection.cursor()
             # Attempt to find user by telegram_id
             if telegram_id:
                 cursor.execute(
-                    "SELECT user_id, username, country, user_role "
-                    "FROM public.users WHERE telegram_id = %s",
-                    (telegram_id,)
+                        "SELECT user_id, username, country, user_role, joined_classroom "
+                        "FROM public.users WHERE telegram_id = %s",
+                        (telegram_id,)
                 )
                 result = cursor.fetchone()
                 if result:
                     cursor.close()
 
-                    return result[0], result[1], result[2], result[3]
+                    return result[0], result[1], result[2], result[3], result[4]
             cursor.close()
-            return None, None, None, None
+            return None, None, None, None, None
         except Exception as error:
             logger.error(f"Error checking user in the database: {error}")
-            return None, None, None, None
+            return None, None, None, None, None
 
     def add_new_user(self, username, language, role, telegram_id):
         """
@@ -247,7 +247,7 @@ class DatabaseService:
 
 
 
-    def get_random_translator_video(self, user_language, context=None, exclude_ids=None):
+    def get_random_translator_video(self, user_language, context=None, classroom_id=None, exclude_ids=None):
         """
         Fetch a random translator video (video_reference_id IS NULL) for the
         given user_language. Optionally exclude a list of video IDs (exclude_ids),
@@ -263,6 +263,7 @@ class DatabaseService:
             user_id = context.user_data.get('user_id') if context else None
             
             exclude_clause = "AND v.video_id NOT IN %s" if exclude_ids else ""
+            classroom_clause = "AND v.classroom_id = %s" if classroom_id else ""
             query = f"""
                 SELECT v.video_id, v.file_path, s.sentence_content
                 FROM videos v
@@ -273,9 +274,13 @@ class DatabaseService:
                   AND v.video_id NOT IN (
                       SELECT video_reference_id FROM videos WHERE user_id = %s
                   )
+                  {classroom_clause}
                   {exclude_clause}
             """
+            
             params = [user_language, user_id, user_id]
+            if classroom_id:
+                params.append(classroom_id)
             if exclude_ids:
                 params.append(tuple(exclude_ids))
             
@@ -423,8 +428,103 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"get_translator_videos error: {e}")
             return []
+    def update_user_classroom_status(self, user_id, classroom_id):
+        """
+        Updates the 'joined_classroom' column for the user in the database to the classroom_id.
+        Uses a prepared statement to prevent SQL injection.
+        """
+        connection = self.connection
+        if not connection:
+            return False
 
+        try:
+            cursor = connection.cursor()
+            
+            # Prepared statement (parameterized query) to prevent SQL injection
+            query = """
+                UPDATE public.users
+                SET joined_classroom = %s
+                WHERE user_id = %s
+            """
+            
+            # The %s placeholders will be safely replaced by the parameters below
+            cursor.execute(query, (classroom_id, user_id))
+            
+            connection.commit()
+            cursor.close()
+            logger.info(f"User {user_id} successfully joined classroom {classroom_id}.")
+            return True
+        except Exception as error:
+            logger.error(f"Error updating classroom status for user {user_id}: {error}")
+            return False
+    def remove_user_from_classroom(self, user_id: int):
+        """
+        Removes the user from the classroom by setting the classroom_id to NULL.
+        Returns:
+            - True if successful.
+            - False if an error occurred.
+        """
+        connection = self.connection
+        if not connection:
+            logger.error("Database connection is not available.")
+            return False
 
+        try:
+            cursor = connection.cursor()
+
+            # SQL query to remove user from classroom by setting classroom_id to NULL
+            query = """
+                UPDATE public.users
+                SET joined_classroom = NULL
+                WHERE user_id = %s
+            """
+            cursor.execute(query, (user_id,))  # Use prepared statement to avoid SQL injection
+            connection.commit()  # Commit the transaction
+
+            cursor.close()
+            
+            logger.info(f"User {user_id} successfully removed from classroom.")
+            return True  # Return True if successful
+
+        except Exception as error:
+            logger.error(f"Error removing user {user_id} from classroom: {error}")
+            connection.rollback()  # Rollback in case of error
+            return False  # Return False in case of any error    
+    def validate_classroom_credentials(self, classroom_id: str, password: str):
+        """
+        Validates the classroom credentials (classroom_id and password).
+        Returns:
+            - True if valid credentials.
+            - False if invalid credentials.
+        """
+        connection = self.connection
+        if not connection:
+            return False
+
+        try:
+            cursor = connection.cursor()
+            logger.debug(f"Validating classroom credentials: classroom_id={classroom_id}, password={password}")
+            # SQL query to check if the classroom ID and password both match
+            query = """
+                SELECT classroom_id
+                FROM public.classroom
+                WHERE classroom_id = %s AND password = %s
+            """
+            cursor.execute(query, (classroom_id, password))  # Use prepared statement to avoid SQL injection
+            result = cursor.fetchone()  # Fetch the result
+            logger.debug(f"Classroom credentials validation result: {result}")
+
+            cursor.close()
+
+            if result:
+                return True  # Credentials are valid (classroom_id exists in DB)
+            else:
+                return False
+
+        except Exception as error:
+            logger.error(f"Error validating classroom credentials: {error}")
+            return False  # Return False in case of any error
+            
     def delete_sentence_and_video(self, sentence_id, user_id, video_id):
         """
         The 'legacy' approach for when there's exactly 1 video referencing the sentence:
