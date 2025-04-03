@@ -49,16 +49,18 @@ class RegistrationHandlers:
         context.user_data['telegram_username'] = telegram_username
 
         # Check if user exists in DB
-        (db_user_id,
-         existing_username,
-         user_language_db,
-         user_role) = self.db_service.check_user_exists(telegram_id)
+        db_user_id, existing_username, user_language_db, user_role, classroom_id = self.db_service.check_user_exists(telegram_id)
         if db_user_id is not None:
             # User already exists
             context.user_data['user_id'] = db_user_id
             context.user_data['username'] = existing_username
             context.user_data['role'] = user_role
             context.user_data['language'] = user_language_db
+
+            # If the existing user is in a classroom, store the classroom_id in context
+            if classroom_id:
+                context.user_data['classroom_id'] = classroom_id
+                context.user_data['classroom_view'] = False
 
             # If the existing user is a translator, go to translator menu
             if user_role == 'Translator':
