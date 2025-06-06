@@ -79,7 +79,9 @@ class RegistrationHandlers:
                 return await userhandler.show_user_menu(update,context)
         else:
             # New user: ask them to select a language
-            reply_keyboard = [["🇦🇿 Azerbaijani", "🇷🇺 Russian", "🇺🇦 Ukrainian"]]
+            reply_keyboard = [["🇦🇿 Azerbaijani", "🇬🇧 English"],
+                              ["🇺🇦 Ukrainian", "🇷🇺 Russian"]
+                            ]
             await update.message.reply_text(
                 "Please select your language:",
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard,
@@ -101,8 +103,8 @@ class RegistrationHandlers:
             context.user_data['language'] = 'Azerbaijani'
         # elif "🇩🇪" in selected_language:
         #     context.user_data['language'] = 'German'
-        # elif "🇬🇧" in selected_language:
-        #     context.user_data['language'] = 'English'
+        elif "🇬🇧" in selected_language:
+             context.user_data['language'] = 'English'
         elif "🇷🇺" in selected_language:
             context.user_data['language'] = 'Russian'
         elif "🇺🇦" in selected_language:
