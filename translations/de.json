@@ -94,7 +94,7 @@
   "request_video_explanation": "Bu düymədən istifadə etdikdə qarşınıza cümlə və cümlənin işarət dilində tərcüməsi olan bir video çıxacaq. Siz isə bu videonun eynisini çəkib göndərməlisiniz.",
   "view_videos_explanation": "Öz videolarınıza yenidən baxa, onları redaktə edə və Tərcüməçilər tərəfindən sizə verilən səslərin sayını görə bilərsiniz",
   "show_my_rank_explanation": "Tərcümələrə töhfəniz əsasında reytinqinizi yoxlayın.",
-  "my_classrooms": "my classrooms",
+  "my_classrooms": "Meine Klassenzimmer 🏫📘",
   "create_classroom": "create classroom",
   "enter_classname": "enter classname",
   "classroom_created": "classroom created",
@@ -109,5 +109,10 @@
   "no_classroom_selected": "no_classroom_selected",
   "classroom_deletion_error": "classroom_deletion_error",
   "confirm_delete": "confirm_delete",
-  "go_back_classroom": "go_back_classroom"
+  "go_back_classroom": "go_back_classroom",
+  "go_back_to_main_menu": "Əsas menyuya geri dön ⬅️",
+  "classroom_remove_success": "You have successfully removed the classroom.",
+  "classroom_remove_failure": "Failed to remove the classroom.",
+  "enter_classroom_id": "Sinifin Kodunu girin"
+  
 }
