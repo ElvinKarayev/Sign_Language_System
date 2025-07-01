@@ -86,7 +86,6 @@ class TranslatorHandlers:
             menu_text,
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=True)
         )
-
         return TRANSLATOR_MENU
 
     async def handle_translator_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -187,7 +186,7 @@ class TranslatorHandlers:
         go_back_list_text = self.translation_manager.get_translation(context, 'go_back_classroom_list')
         no_classrooms_text = self.translation_manager.get_translation(context, 'no_classrooms')
         create_classroom_text = self.translation_manager.get_translation(context, 'create_classroom')
-        delete_classroom_text = self.translation_manager.get_translation(context, 'delete_classroom')
+        delete_classroom_text = self.translation_manager.get_translation(context, 'remove_classroom')
         classroom_choose_an_action_text = self.translation_manager.get_translation(context, 'classroom_choose_an_action')
         classroom_name_text = self.translation_manager.get_translation(context, 'classroom_name')
         classroom_password_text = self.translation_manager.get_translation(context, 'classroom_password')
@@ -312,7 +311,7 @@ class TranslatorHandlers:
         user_choice = update.message.text
 
         create_classroom_text = self.translation_manager.get_translation(context, 'create_classroom')
-        delete_classroom_text = self.translation_manager.get_translation(context, 'delete_classroom')
+        delete_classroom_text = self.translation_manager.get_translation(context, 'remove_classroom')
         go_back_text = self.translation_manager.get_translation(context, 'go_back')
         go_back_list_text = self.translation_manager.get_translation(context, 'go_back_classroom_list')
         classroom_name_text = self.translation_manager.get_translation(context, 'classroom_name')
@@ -513,7 +512,7 @@ class TranslatorHandlers:
         return await self.show_classrooms_menu(update, context)
     
     #===========================================================
-    # LEADERBOARD
+    # LEADERBOARD -- RANK
     #============================================================
     async def handle_show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
