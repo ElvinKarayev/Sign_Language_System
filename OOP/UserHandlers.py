@@ -80,7 +80,8 @@ class UserHandlers:
                 # User is not part of any classroom
                 reply_keyboard = [
                     [request_video_text, view_videos_text, join_classroom_text],
-                    [contact_admin_text, user_buttons_info],
+                    [show_my_rank_text,contact_admin_text],
+                    [user_buttons_info],
                     [cancel_text]
                 ]
 
