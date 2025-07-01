@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class TranslationManager:
-    def __init__(self, translations_dir='/Users/elvingarayev/Desktop/Sign_Language_System-main/translations'):
+    def __init__(self, translations_dir):
         """
         Initialize the TranslationManager by specifying the directory where
         translation JSON files are stored.
