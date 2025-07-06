@@ -2,9 +2,13 @@ import psycopg2
 import logging
 import os
 
+from BucketService import BucketService
+
 logger = logging.getLogger(__name__)
 
 class DatabaseService:
+    
+
     def __init__(self, config_path='./config.txt'):
             """
             Initialize the DatabaseService by reading database credentials
@@ -70,7 +74,32 @@ class DatabaseService:
         except Exception as error:
             logger.error(f"Error connecting to the database: {error}")
             return None
+        
+    def get_last_video_file_path(self, user_id):
+        connection = self.connection
+        if not connection:
+            return None
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT file_path
+                FROM public.videos
+                WHERE user_id = %s
+                ORDER BY uploaded_at DESC
+                LIMIT 1
+                """,
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            cursor.close()
+            return row[0] if row else None
+        except Exception as e:
+            logger.error(f"Error retrieving last video path: {e}")
+            return None
 
+    
+    
     def check_user_exists(self, telegram_id):
         """
         Checks if a user exists in the database by telegram_id or username 
@@ -189,7 +218,6 @@ class DatabaseService:
 
             # 2) Insert row in 'videos' referencing that sentence_id
             cursor = connection.cursor()
-            full_file_path = os.path.abspath(file_path).replace('\\', '/')
             if classroom_id:
                 cursor.execute(
                     """
@@ -197,7 +225,7 @@ class DatabaseService:
                         (user_id, file_path, text_id, language, video_reference_id, uploaded_at, classroom_id)
                     VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                     """,
-                    (user_id, full_file_path, sentence_id, language, reference_id, str(classroom_id))
+                    (user_id, file_path, sentence_id, language, reference_id, str(classroom_id))
                 )
             else:
                 cursor.execute(
@@ -206,7 +234,7 @@ class DatabaseService:
                         (user_id, file_path, text_id, language, video_reference_id, uploaded_at)
                     VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                     """,
-                    (user_id, full_file_path, sentence_id, language, reference_id)
+                    (user_id, file_path, sentence_id, language, reference_id)
                 )
             connection.commit()
             cursor.close()
