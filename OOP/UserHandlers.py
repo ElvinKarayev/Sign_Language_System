@@ -1,3 +1,4 @@
+from io import BytesIO
 import logging
 import os
 import re
@@ -13,6 +14,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
+from BucketService import BucketService
 from cancel import cancel_restarted_message
 from telegram.ext import ContextTypes
 from admin import handle_contact_admin
@@ -88,6 +90,7 @@ class UserHandlers:
         message = update.message if update.message else update.callback_query.message
 
         if message:
+            
             # Send the video first
             try:
                 with open('/home/ubuntu/Sign_Language_System/assets/instruction.mp4', 'rb') as video:
@@ -104,8 +107,6 @@ class UserHandlers:
             logger.error("Both update.message and callback_query.message are None.")
         
         return USER_MENU
-
-    
 
     async def handle_user_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         cancel_restarted_message(context)  # <-- THIS LINE WAS MISSING
@@ -188,6 +189,7 @@ class UserHandlers:
             invalid_option_text = self.translation_manager.get_translation(context, 'invalid_option')
             await update.message.reply_text(invalid_option_text)
             return await self.show_user_menu(update,context)
+        
     async def handle_class_password(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         cancel_restarted_message(context)
         user_input = update.message.text
@@ -358,7 +360,14 @@ class UserHandlers:
 
             # Generate a file path and save video
             file_path = self._get_next_available_filename(update, context, role="user")
-            await self._download_video(user_video, file_path, context)
+            # Download video to memory
+            file = await context.bot.get_file(user_video.file_id)
+            file_stream = BytesIO()
+            await file.download_to_memory(out=file_stream)
+            file_stream.seek(0)
+
+            # Upload to S3 using exact path
+            BucketService.addToBucket(file_stream, file_path)
             
             # Insert DB row referencing the translator video
             user_language = context.user_data.get('language', 'English')
@@ -836,32 +845,32 @@ class UserHandlers:
         username = context.user_data.get('username', 'unknown')
 
         if role.lower() == "user":
-            directory = "/home/ubuntu/Sign_Language_System/Video/User"
-        else:
-            directory = "/home/ubuntu/Sign_Language_System/Video/Translator"
+            directory = "https://vesilebucket.s3.amazonaws.com/sign-language-videos/User/"
+            prefix = "user_video"
 
-        # Ensure the directory exists
-        os.makedirs(directory, exist_ok=True)
+            # Ensure the directory exists
 
-        prefix = f"{role.lower()}_video_{user_id}_{username}_"
-        existing_files = [f for f in os.listdir(directory) if f.startswith(prefix)]
-
-        max_number = 0
-        for file in existing_files:
-            match = re.search(rf"{prefix}(\d+)\.mp4", file)
+       
+        #check user videos from database, return the file_path of the last video and cahnge the last num of file path and +1
+        #exaple: https://vesilebucket.s3.amazonaws.com/sign-language-videos/Translator/translator_video_2_unknown_2.mp4
+        #if the last number is 2 add one 
+        #updated file path is: 
+        #https://vesilebucket.s3.amazonaws.com/sign-language-videos/Translator/translator_video_2_unknown_3.mp4
+        #if not found make the num 1
+        
+        last_path = self.db_service.get_last_video_file_path(user_id)
+        number = 1
+        
+        if last_path:
+            last_filename = last_path.split("/")[-1]
+            match = re.search(rf"{prefix}_\d+_[^_]+_(\d+)", last_filename)
             if match:
-                file_number = int(match.group(1))
-                max_number = max(max_number, file_number)
+                number = int(match.group(1)) + 1
 
-        next_number = max_number + 1
-        return os.path.join(directory, f"{prefix}{next_number}.mp4")
+        new_filename = f"{prefix}_{user_id}_{username}_{number}.mp4"
+        return directory + new_filename
 
-    async def _download_video(self, video, file_path, context):
-        """
-        Download a Telegram video to the local file system.
-        """
-        new_file = await context.bot.get_file(video.file_id)
-        await new_file.download_to_drive(file_path)
+
 
     async def _edit_video_message(self, context, chat_id, message_id, video_path, caption, markup=None):
         """
@@ -892,9 +901,6 @@ class UserHandlers:
             )
         except Exception as e:
             logger.error(f"Error editing message text: {e}")
-
-
-
 
     async def handle_toggle_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         cancel_restarted_message(context)
@@ -951,8 +957,7 @@ class UserHandlers:
 
         # After toggling, we need to update the inline keyboard
         await self._update_user_video_keyboard(update, context, video_id)
-        
-    
+            
     async def hide_feedback_for_video(self, context, video_id: int, chat_id: int):
         """
         Hides (deletes) the feedback message for a given video_id if it's currently visible,
@@ -981,7 +986,6 @@ class UserHandlers:
             # Mark it as hidden
             feedback_shown_map[video_id] = False
             context.user_data["feedback_shown"] = feedback_shown_map
-
 
     async def _update_user_video_keyboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE, video_id: int):
         # Get the current index from context, etc.
