@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <link rel="stylesheet" th:href="@{/style.css}">
+
+    <meta charset="UTF-8">
+    <title>Admin Panel</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        header {
+            background-color: #003366;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+        }
+        main {
+            padding: 2rem;
+        }
+        h2 {
+            margin-top: 2rem;
+            color: #003366;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            margin-bottom: 2rem;
+        }
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #0055aa;
+            color: white;
+        }
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+        .section {
+            margin-bottom: 3rem;
+        }
+    </style>
+</head>
+<body>
+<header>
+    <h1>Admin Panel</h1>
+</header>
+
+<main>
+    <div class="section">
+        <h2>Video Records</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Video ID</th>
+                    <th>Text ID</th>
+                    <th>Reference ID</th>
+                    <th>User ID</th>
+                    <th>Positive Scores</th>
+                    <th>Negative Scores</th>
+                    <th>Language</th>
+                    <th>File Path</th>
+                    <th>Uploaded At</th>
+                    <th>Points</th>
+                    <th>Classroom ID</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="video : ${videos}">
+                    <td th:text="${video.videoId}">VID</td>
+                    <td th:text="${video.textId}">Text</td>
+                    <td th:text="${video.videoReferenceId}">Ref</td>
+                    <td th:text="${video.userId}">User</td>
+                    <td th:text="${video.positiveScores}">+Score</td>
+                    <td th:text="${video.negativeScores}">-Score</td>
+                    <td th:text="${video.language}">Lang</td>
+                    <td th:text="${video.filePath}">Path</td>
+                    <td th:text="${video.uploadedAt}">Date</td>
+                    <td th:text="${video.points}">Pts</td>
+                    <td th:text="${video.classroomId}">Class</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+
+    </div>
+</main>
+</body>
+</html>
