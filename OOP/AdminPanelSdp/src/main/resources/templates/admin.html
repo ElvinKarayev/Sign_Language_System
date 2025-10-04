@@ -1,10 +1,9 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <link rel="stylesheet" th:href="@{/style.css}">
-
     <meta charset="UTF-8">
     <title>Admin Panel</title>
+    <link rel="stylesheet" th:href="@{/style.css}">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -25,10 +24,31 @@
             margin-top: 2rem;
             color: #003366;
         }
+        input[type="text"] {
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 300px;
+            font-size: 16px;
+        }
+        button {
+            padding: 8px 12px;
+            background-color: #0055aa;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 5px;
+        }
+        button:hover {
+            background-color: #003366;
+        }
         table {
             width: 100%;
             border-collapse: collapse;
             background: white;
+            margin-top: 1rem;
             margin-bottom: 2rem;
         }
         th, td {
@@ -46,6 +66,13 @@
         .section {
             margin-bottom: 3rem;
         }
+        a {
+            color: #0066cc;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -56,42 +83,37 @@
 <main>
     <div class="section">
         <h2>Video Records</h2>
+
+        <!-- 🔍 Backend Search Form -->
+        <form method="get" action="/admin">
+            <input type="text" name="keyword" placeholder="Search..." th:value="${param.keyword}" />
+            <button type="submit">Search</button>
+        </form>
+
         <table>
             <thead>
                 <tr>
                     <th>Video ID</th>
-                    <th>Text ID</th>
+                    <th>User (ID - Username)</th>
+                    <th>Full Sentence</th>
                     <th>Reference ID</th>
-                    <th>User ID</th>
-                    <th>Positive Scores</th>
-                    <th>Negative Scores</th>
                     <th>Language</th>
-                    <th>File Path</th>
                     <th>Uploaded At</th>
-                    <th>Points</th>
-                    <th>Classroom ID</th>
+                    <th>Video Link</th>
                 </tr>
             </thead>
             <tbody>
                 <tr th:each="video : ${videos}">
-                    <td th:text="${video.videoId}">VID</td>
-                    <td th:text="${video.textId}">Text</td>
-                    <td th:text="${video.videoReferenceId}">Ref</td>
-                    <td th:text="${video.userId}">User</td>
-                    <td th:text="${video.positiveScores}">+Score</td>
-                    <td th:text="${video.negativeScores}">-Score</td>
-                    <td th:text="${video.language}">Lang</td>
-                    <td th:text="${video.filePath}">Path</td>
-                    <td th:text="${video.uploadedAt}">Date</td>
-                    <td th:text="${video.points}">Pts</td>
-                    <td th:text="${video.classroomId}">Class</td>
+                    <td th:text="${video.videoId}">1</td>
+                    <td th:text="${video.userId + ' - ' + video.username}">101 - john_doe</td>
+                    <td th:text="${video.fullSentence}">Hello world</td>
+                    <td th:text="${video.videoReferenceId}">5</td>
+                    <td th:text="${video.language}">en</td>
+                    <td th:text="${#dates.format(video.uploadedAt, 'yyyy-MM-dd HH:mm')}">2024-01-01</td>
+                    <td><a th:href="${video.presignedUrl}" target="_blank">Watch</a></td>
                 </tr>
             </tbody>
         </table>
-    </div>
-
-    <div class="section">
-
     </div>
 </main>
 </body>

@@ -26,7 +26,7 @@ dependencies {
     // Spring Boot starters
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
-    implementation 'org.springframework.boot:spring-boot-starter-jdbc'  // ✅ needed instead of JPA
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'  //  needed instead of JPA
 
     // PostgreSQL JDBC Driver
     runtimeOnly 'org.postgresql:postgresql:42.7.3'
@@ -36,11 +36,11 @@ dependencies {
     implementation 'org.hibernate.validator:hibernate-validator:8.0.0.Final'
     implementation 'org.glassfish:jakarta.el:4.0.2'
 
-    // Lombok (if you're using it)
+    // Lombok
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
 
-    // Dev tools (optional, for hot reload)
+    // Dev tools 
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
 
     // Testing
@@ -48,6 +48,11 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
+
+
+    implementation 'software.amazon.awssdk:s3:2.25.8'
+    implementation 'software.amazon.awssdk:auth:2.25.8'
+
 
 }
 

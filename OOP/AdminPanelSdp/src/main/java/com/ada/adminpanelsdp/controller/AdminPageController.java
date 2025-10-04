@@ -9,10 +9,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 
 @Controller
+
 public class AdminPageController {
 
     @Autowired
@@ -21,13 +23,20 @@ public class AdminPageController {
     @Autowired
     private VideoService videoService;
 
+    // Handles GET request for the admin panel page
     @GetMapping("/admin")
-    public String showAdminPage(Model model) {
+    public String showAdminPage(@RequestParam(value = "keyword", required = false) String keyword, Model model) {
         List<UserDTO> users = userService.getAllUsers();
-        List<VideoDTO> videos = videoService.getAllVideos();
+        List<VideoDTO> videos;
+
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            videos = videoService.searchVideos(keyword);
+        } else {
+            videos = videoService.getAllVideos();
+        }
 
         model.addAttribute("users", users);
         model.addAttribute("videos", videos);
-        return "admin"; // Thymeleaf template name
+        return "admin"; // Returns admin.html Thymeleaf page
     }
 }

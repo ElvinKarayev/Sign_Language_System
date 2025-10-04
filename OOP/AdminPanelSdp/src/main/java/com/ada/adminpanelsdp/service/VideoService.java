@@ -13,7 +13,13 @@ public class VideoService {
     @Autowired
     private VideoRepository videoRepository;
 
+    // Fetch all videos with full sentence joined from sentences table
     public List<VideoDTO> getAllVideos() {
         return videoRepository.getAllVideos();
+    }
+
+    // Search videos using keyword (matches sentence, username, language, etc.)
+    public List<VideoDTO> searchVideos(String keyword) {
+        return videoRepository.searchByKeyword(keyword);
     }
 }
