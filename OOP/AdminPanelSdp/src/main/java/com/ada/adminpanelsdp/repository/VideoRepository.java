@@ -4,7 +4,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -19,10 +18,20 @@ import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequ
 @Repository
 public class VideoRepository {
 
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate jdbcTemplate;
+    private final S3Presigner presigner;
 
+    public VideoRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+        // S3Presigner yalnız bir dəfə yaradılır (performans üçün)
+        this.presigner = S3Presigner.builder()
+                .region(Region.EU_CENTRAL_1)
+                .build();
+    }
+
+    // =========================
     // Fetch all videos
+    // =========================
     public List<VideoDTO> getAllVideos() {
         String sql = """
             SELECT 
@@ -48,7 +57,9 @@ public class VideoRepository {
         return jdbcTemplate.query(sql, (rs, rowNum) -> mapRowToVideoDTO(rs));
     }
 
+    // =========================
     // Search videos by keyword
+    // =========================
     public List<VideoDTO> searchByKeyword(String keyword) {
         String sql = """
             SELECT 
@@ -81,17 +92,19 @@ public class VideoRepository {
         String likePattern = "%" + keyword.toLowerCase() + "%";
 
         return jdbcTemplate.query(
-            sql,
-            new Object[]{likePattern, likePattern, likePattern, likePattern, likePattern, likePattern},
-            (rs, rowNum) -> mapRowToVideoDTO(rs)
+                sql,
+                new Object[]{likePattern, likePattern, likePattern, likePattern, likePattern, likePattern},
+                (rs, rowNum) -> mapRowToVideoDTO(rs)
         );
     }
 
-    // Map SQL row to VideoDTO
+    // =========================
+    // Map SQL ResultSet to DTO
+    // =========================
     private VideoDTO mapRowToVideoDTO(java.sql.ResultSet rs) throws java.sql.SQLException {
         VideoDTO video = new VideoDTO();
         video.setVideoId(rs.getInt("video_id"));
-        video.setVideoReferenceId((Integer) rs.getObject("video_reference_id"));
+        video.setVideoReferenceId(rs.getObject("video_reference_id", Integer.class));
         video.setUserId(rs.getInt("user_id"));
         video.setPositiveScores(rs.getInt("positive_scores"));
         video.setNegativeScores(rs.getInt("negative_scores"));
@@ -105,19 +118,23 @@ public class VideoRepository {
 
         // Generate presigned URL
         video.setPresignedUrl(generatePresignedUrl(video.getFilePath()));
+
         return video;
     }
 
+    // =========================
     // Generate AWS S3 presigned URL
+    // =========================
     private String generatePresignedUrl(String filePath) {
-        if (filePath == null || !filePath.contains("vesilebucket")) return null;
+        if (filePath == null || filePath.isBlank()) {
+            return null;
+        }
 
         try {
             String s3Key = filePath.replace("https://vesilebucket.s3.amazonaws.com/", "");
-
-            S3Presigner presigner = S3Presigner.builder()
-                    .region(Region.EU_CENTRAL_1)
-                    .build();
+            if (s3Key.isEmpty()) {
+                s3Key = filePath;
+            }
 
             GetObjectRequest getObjectRequest = GetObjectRequest.builder()
                     .bucket("vesilebucket")
@@ -130,7 +147,6 @@ public class VideoRepository {
                     .build();
 
             PresignedGetObjectRequest presignedRequest = presigner.presignGetObject(presignRequest);
-            presigner.close();
             return presignedRequest.url().toString();
 
         } catch (Exception e) {
@@ -139,3 +155,6 @@ public class VideoRepository {
         }
     }
 }
+
+
+
