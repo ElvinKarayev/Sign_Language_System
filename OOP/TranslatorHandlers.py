@@ -648,14 +648,14 @@ class TranslatorHandlers:
         await update.message.reply_text(video_prompt_text)
         return TRANSLATOR_UPLOAD
     
-
     async def handle_video_upload(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         cancel_restarted_message(context)
         """
-        Handle the translator uploading the video for the newly written sentence.
-        If user sent a valid video, we store it in DB and go back to translator menu.
-        Otherwise, ask again or handle cancel.
+        Handles translator video uploads.
+        Downloads the Telegram video → uploads it to S3 → saves info in DB.
+        Works both for normal translators and classroom uploads.
         """
+
         cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
         thank_you_video_text = self.translation_manager.get_translation(context, 'thank_you_video')
         valid_video_error_text = self.translation_manager.get_translation(context, 'valid_video_error')
@@ -663,41 +663,70 @@ class TranslatorHandlers:
 
         user_video = update.message.video if update.message else None
         user_input = update.message.text if update.message else None
-        
+
         selected_classroom = context.user_data.get("selected_classroom")
         classroom_id = selected_classroom["classroom_id"] if selected_classroom else None
-        
+
         if user_video:
-            user_id = self._get_user_id_from_context(context, update)
-            if not user_id:
-                await update.message.reply_text(bot_restarted_text)
-                return -1
+            try:
+                # ✅ Get user id
+                user_id = self._get_user_id_from_context(context, update)
+                if not user_id:
+                    await update.message.reply_text(bot_restarted_text)
+                    return -1
 
-            # We'll generate a file path
-            file_path = self._get_next_available_filename(update, context, role="translator")
+                # ✅ Generate S3 file path
+                file_path = self._get_next_available_filename(update, context, role="translator")
 
-            # Download the video
-            await self._download_video(user_video, file_path, context)
+                # ✅ Download Telegram video into memory
+                telegram_file = await context.bot.get_file(user_video.file_id)
+                file_stream = BytesIO()
+                await telegram_file.download_to_memory(out=file_stream)
+                file_stream.seek(0)
 
-            # Save to DB
-            user_language = context.user_data.get('language', 'English')
-            sentence = context.user_data.get('sentence')
-            selected_classroom = context.user_data.get("selected_classroom")
-            classroom_id = selected_classroom["classroom_id"] if selected_classroom else None
-            self.db_service.save_video_info(user_id, file_path, user_language, sentence, classroom_id=classroom_id)
+                # ✅ Upload video to S3 using the same working logic as in UserHandler
+                BucketService.addToBucket(file_stream, file_path)
+    
+                # ✅ Save metadata in DB
+                user_language = context.user_data.get('language', 'English')
+                sentence = context.user_data.get('sentence')
 
-            await update.message.reply_text(thank_you_video_text)
-            if not classroom_id:
+                if classroom_id:
+                    self.db_service.save_video_info(
+                        user_id=user_id,
+                        file_path=file_path,
+                        language=user_language,
+                        sentence=sentence,
+                        classroom_id=classroom_id
+                    )
+                else:
+                    self.db_service.save_video_info(
+                        user_id=user_id,
+                        file_path=file_path,
+                        language=user_language,
+                        sentence=sentence
+                    )
+
+                # ✅ Confirm upload
+                await update.message.reply_text(thank_you_video_text)
+
+                # ✅ Redirect to proper menu
+                if classroom_id:
+                    return await self.show_classrooms_menu(update, context)
                 return await self.show_translator_menu(update, context)
-            return await self.show_classrooms_menu(update, context)
+
+            except Exception as e:
+                logging.error(f"❌ Error uploading translator video: {e}")
+                logging.error(traceback.format_exc())
+                await update.message.reply_text("⚠️ There was an error uploading your video. Please try again later.")
+                return await self.show_translator_menu(update, context)
 
         elif user_input == cancel_text:
             return await self.show_translator_menu(update, context)
+
         else:
-            # Not a valid video message
             await update.message.reply_text(valid_video_error_text)
             return TRANSLATOR_UPLOAD
-        
 
     async def display_sentences_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -1077,7 +1106,7 @@ class TranslatorHandlers:
     # --------------------------------------------------------------------------
 
     async def start_voting(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """
+        """ 
         Start the voting flow:
          - Show a 'Voting Started' message
          - Immediately fetch/send the first video to vote on

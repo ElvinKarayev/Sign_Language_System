@@ -273,7 +273,7 @@ class DatabaseService:
             logger.error(f"Error in _find_sentence_id_if_exists: {e}")
             return None
 
-
+ 
 
     def get_random_translator_video(self, user_language, context=None, classroom_id=None, exclude_ids=None):
         """
@@ -835,16 +835,16 @@ class DatabaseService:
                 connection.commit()
 
                 # Delete the file from the file system
-                if video_file_path and os.path.exists(video_file_path):
-                    os.remove(video_file_path)
-                    logger.info(f"Deleted user video file {video_file_path}")
+        
                 cursor.close()
                 logger.info(f"Deleted user video {video_id} for user {user_id}")
+                #return file path
             else:
                 logger.error(f"Video with id {video_id} not found for user {user_id}")
                 cursor.close()
         except Exception as error:
             logger.error(f"Error deleting user video: {error}")
+            
 
     def get_random_video_for_voting(self, user_id, language):
         """

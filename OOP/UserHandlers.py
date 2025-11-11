@@ -295,13 +295,14 @@ class UserHandlers:
         # Fetch a random translator video, excluding the user's own videos or skipped ones
         file_path, sentence = self.db_service.get_random_translator_video(user_language, context, exclude_ids=skipped_videos, classroom_id=classroom_id)
         if file_path:
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, 'rb') as video_file:
-                        await update.message.reply_video(video_file)
-                    if sentence:
-                        msg = self.translation_manager.get_translation(context, 'translated_sentence')
-                        await update.message.reply_text(msg.format(sentence))
+            try:
+                bucketUrl = BucketService.view_bucket_video(file_path_url=file_path) 
+                await update.message.reply_video(
+                    video=bucketUrl
+                )
+                if sentence:
+                    msg = self.translation_manager.get_translation(context, 'translated_sentence')
+                    await update.message.reply_text(msg.format(sentence))
                     
                     # Prompt user with skip/cancel options
                     cancel_text = self.translation_manager.get_translation(context, 'cancel_button')
@@ -315,7 +316,7 @@ class UserHandlers:
                     )
                     return USER_REQUEST
 
-                except Exception as e:
+            except Exception as e:
                     logger.error(f"Error sending video: {e}")
                     await update.message.reply_text("Sorry, there was an error sending the video.")
                     # Possibly return to user menu
@@ -550,7 +551,8 @@ class UserHandlers:
         delete_callback_data = f"delete_user_video_{user_video_id}"
         delete_button = InlineKeyboardButton(delete_text, callback_data=delete_callback_data)
 
-        feedback_exists = self.db_service.check_if_feedback_exists(user_video_id)
+        # feedback_exists = self.db_service.check_if_feedback_exists(user_video_id)
+        feedback_exists = True
         feedback_shown_map = context.user_data.get("feedback_shown", {})
         feedback_shown = feedback_shown_map.get(user_video_id, False)
 
@@ -604,7 +606,7 @@ class UserHandlers:
         
         if 'translator' in message_ids:
             existing_msg_id = message_ids['translator']
-            if translator_video_path and os.path.exists(translator_video_path):
+            if translator_video_path:
                 await self._edit_video_message(
                     context, chat_id, existing_msg_id,
                     translator_video_path, translator_caption
@@ -615,11 +617,14 @@ class UserHandlers:
                     translator_not_found
                 )
         else:
-            if translator_video_path and os.path.exists(translator_video_path):
-                msg = await message.reply_video(
-                    video=open(translator_video_path, 'rb'),
-                    caption=translator_caption
-                )
+            if translator_video_path:
+                signed_url = BucketService.view_bucket_video(translator_video_path)
+                if signed_url:
+                    msg = await message.reply_video(
+                        video=signed_url,
+                        caption=translator_caption
+                    )
+                #else error cixart logger.error
                 message_ids['translator'] = msg.message_id
             else:
                 msg = await message.reply_text(translator_not_found)
@@ -633,7 +638,7 @@ class UserHandlers:
         
         if 'user' in message_ids:
             existing_msg_id = message_ids['user']
-            if user_video_path and os.path.exists(user_video_path):
+            if user_video_path:
                 await self._edit_video_message(
                     context, chat_id, existing_msg_id,
                     user_video_path, user_video_caption, markup
@@ -644,9 +649,10 @@ class UserHandlers:
                     user_video_not_found, markup
                 )
         else:
-            if user_video_path and os.path.exists(user_video_path):
+            if user_video_path:
+                signed_url = BucketService.view_bucket_video(user_video_path)
                 msg = await message.reply_video(
-                    video=open(user_video_path, 'rb'),
+                    video=signed_url,
                     caption=user_video_caption,
                     reply_markup=markup
                 )
@@ -706,7 +712,6 @@ class UserHandlers:
 
     async def handle_delete_user_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         cancel_restarted_message(context)  # If you use this pattern to reset fallback.
-
         """
         Callback for the "Delete" button in the inline keyboard.
         Deletes the user's video from DB/filesystem, re-renders the list.
@@ -732,8 +737,9 @@ class UserHandlers:
 
         # 2) Delete from DB
         self.db_service.delete_user_video(user_video_id, user_id)
+        # 3)bucket elave ele
 
-        # 3) Remove from context's user_videos
+        # 4) Remove from context's user_videos
         user_videos = context.user_data.get('user_videos', [])
         current_index = context.user_data.get('current_index', 0)
 
@@ -876,8 +882,12 @@ class UserHandlers:
         """
         Helper to edit an existing message with a new video (InputMediaVideo).
         """
-
-        media = InputMediaVideo(media=open(video_path, 'rb'), caption=caption)
+        signed_url = BucketService.view_bucket_video(video_path)
+        if not signed_url:
+            logger.error("Either file_Path or Bucket_service went down")
+            return
+        
+        media = InputMediaVideo(media=signed_url, caption=caption)
         try:
             await context.bot.edit_message_media(
                 chat_id=chat_id,

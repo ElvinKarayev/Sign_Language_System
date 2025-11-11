@@ -25,7 +25,7 @@ public class VideoRepository {
         this.jdbcTemplate = jdbcTemplate;
         // S3Presigner yalnız bir dəfə yaradılır (performans üçün)
         this.presigner = S3Presigner.builder()
-                .region(Region.EU_CENTRAL_1)
+                .region(Region.US_EAST_1)
                 .build();
     }
 
